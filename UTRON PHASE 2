@@ -1,0 +1,453 @@
+// ===================== Enhanced Ultron AI Assistant (MainActivity.kt) =====================
+// ✅ Updated Android AI Assistant with Claude Sonnet 4 and modern practices
+// Features: Voice Input, Latest Claude API, TTS, Legitimate Device Controls
+
+package com.example.ultronai
+
+import android.Manifest
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.net.wifi.WifiManager
+import android.nfc.NfcAdapter
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
+import android.telephony.SmsManager
+import android.util.Log
+import android.widget.Button
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.IOException
+import java.util.*
+import java.util.concurrent.TimeUnit
+
+class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+
+    private val REQUEST_CODE_SPEECH_INPUT = 100
+    private val PERMISSIONS_REQUEST_CODE = 101
+    
+    private lateinit var textToSpeech: TextToSpeech
+    private lateinit var txtResponse: TextView
+    private lateinit var btnSpeak: Button
+    
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    // Store API key securely - in production, use Android Keystore or encrypted SharedPreferences
+    private val API_KEY = "sk-ant-your-api-key-here" // Replace with your actual API key
+
+    companion object {
+        private const val TAG = "UltronAI"
+        private const val CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
+        private const val CLAUDE_MODEL = "claude-sonnet-4-20250514" // Latest Claude Sonnet 4
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        initializeViews()
+        initializeTextToSpeech()
+        requestNecessaryPermissions()
+    }
+
+    private fun initializeViews() {
+        btnSpeak = findViewById(R.id.btnSpeak)
+        txtResponse = findViewById(R.id.txtResponse)
+        
+        btnSpeak.setOnClickListener {
+            startVoiceInput()
+        }
+        
+        // Add additional control buttons
+        findViewById<Button>(R.id.btnDeviceStatus)?.setOnClickListener {
+            checkDeviceStatus()
+        }
+    }
+
+    private fun initializeTextToSpeech() {
+        textToSpeech = TextToSpeech(this, this)
+    }
+
+    private fun requestNecessaryPermissions() {
+        val requiredPermissions = mutableListOf<String>().apply {
+            add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.INTERNET)
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+                add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            } else {
+                add(Manifest.permission.BLUETOOTH)
+                add(Manifest.permission.BLUETOOTH_ADMIN)
+            }
+            
+            add(Manifest.permission.ACCESS_WIFI_STATE)
+            add(Manifest.permission.CHANGE_WIFI_STATE)
+            add(Manifest.permission.NFC)
+            add(Manifest.permission.SEND_SMS)
+            add(Manifest.permission.MODIFY_AUDIO_SETTINGS)
+        }
+
+        val missingPermissions = requiredPermissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missingPermissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(
+                this, 
+                missingPermissions.toTypedArray(), 
+                PERMISSIONS_REQUEST_CODE
+            )
+        }
+    }
+
+    private fun startVoiceInput() {
+        try {
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Ultron AI...")
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            }
+            startActivityForResult(intent, REQUEST_CODE_SPEECH_INPUT)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting voice input", e)
+            Toast.makeText(this, "Voice input not available", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == REQUEST_CODE_SPEECH_INPUT && resultCode == Activity.RESULT_OK && data != null) {
+            val results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val userInput = results?.firstOrNull()
+            
+            if (!userInput.isNullOrBlank()) {
+                Log.d(TAG, "Voice input received: $userInput")
+                txtResponse.text = "Processing: $userInput"
+                sendMessageToClaude(userInput)
+            }
+        }
+    }
+
+    private fun sendMessageToClaude(userInput: String) {
+        lifecycleScope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    callClaudeAPI(userInput)
+                }
+                
+                txtResponse.text = response
+                speakText(response)
+                processUltronCommands(userInput, response)
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Error communicating with Claude", e)
+                val errorMsg = "Sorry, I'm having trouble connecting. Please try again."
+                txtResponse.text = errorMsg
+                speakText(errorMsg)
+            }
+        }
+    }
+
+    private suspend fun callClaudeAPI(message: String): String {
+        val requestBody = JSONObject().apply {
+            put("model", CLAUDE_MODEL)
+            put("max_tokens", 1000)
+            put("system", "You are Ultron AI, a helpful Android assistant. Be concise and practical in your responses. You can help control device functions like WiFi, Bluetooth, and provide information.")
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("content", message)
+                })
+            })
+        }
+
+        val request = Request.Builder()
+            .url(CLAUDE_API_URL)
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+            .addHeader("x-api-key", API_KEY)
+            .addHeader("anthropic-version", "2023-06-01")
+            .addHeader("content-type", "application/json")
+            .build()
+
+        return withContext(Dispatchers.IO) {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("API call failed: ${response.code}")
+                }
+                
+                val responseBody = response.body?.string() ?: throw IOException("Empty response")
+                val jsonResponse = JSONObject(responseBody)
+                
+                jsonResponse.getJSONArray("content")
+                    .getJSONObject(0)
+                    .getString("text")
+            }
+        }
+    }
+
+    private fun speakText(text: String) {
+        if (::textToSpeech.isInitialized && textToSpeech.isSpeaking.not()) {
+            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ultron_speech")
+        }
+    }
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            val result = textToSpeech.setLanguage(Locale.US)
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                Log.e(TAG, "Text-to-speech language not supported")
+            } else {
+                textToSpeech.setSpeechRate(0.9f)
+                textToSpeech.setPitch(1.0f)
+                Log.d(TAG, "Text-to-speech initialized successfully")
+            }
+        } else {
+            Log.e(TAG, "Text-to-speech initialization failed")
+        }
+    }
+
+    private fun processUltronCommands(userInput: String, aiResponse: String) {
+        val input = userInput.lowercase()
+        val response = aiResponse.lowercase()
+        
+        when {
+            // WiFi Controls
+            input.contains("turn on wifi") || input.contains("enable wifi") -> {
+                toggleWifi(true)
+            }
+            input.contains("turn off wifi") || input.contains("disable wifi") -> {
+                toggleWifi(false)
+            }
+            
+            // Bluetooth Controls
+            input.contains("turn on bluetooth") || input.contains("enable bluetooth") -> {
+                toggleBluetooth(true)
+            }
+            input.contains("turn off bluetooth") || input.contains("disable bluetooth") -> {
+                toggleBluetooth(false)
+            }
+            
+            // Volume Controls
+            input.contains("volume up") || input.contains("increase volume") -> {
+                adjustVolume(true)
+            }
+            input.contains("volume down") || input.contains("decrease volume") -> {
+                adjustVolume(false)
+            }
+            input.contains("mute") -> {
+                muteDevice()
+            }
+            
+            // Device Status
+            input.contains("device status") || input.contains("system status") -> {
+                checkDeviceStatus()
+            }
+            
+            // NFC Status
+            input.contains("nfc status") || input.contains("check nfc") -> {
+                checkNFCStatus()
+            }
+            
+            // SMS (with proper validation)
+            input.contains("send test sms") -> {
+                sendTestSMS()
+            }
+        }
+    }
+
+    private fun toggleWifi(enable: Boolean) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // On Android 10+, we can only open WiFi settings
+                val intent = Intent(Settings.ACTION_WIFI_SETTINGS)
+                startActivity(intent)
+                speakText("Opening WiFi settings. Please ${if (enable) "enable" else "disable"} WiFi manually.")
+            } else {
+                @Suppress("DEPRECATION")
+                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                @Suppress("DEPRECATION")
+                wifiManager.isWifiEnabled = enable
+                speakText("WiFi ${if (enable) "enabled" else "disabled"}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error toggling WiFi", e)
+            speakText("Unable to control WiFi")
+        }
+    }
+
+    private fun toggleBluetooth(enable: Boolean) {
+        try {
+            val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+            val bluetoothAdapter = bluetoothManager.adapter
+            
+            if (bluetoothAdapter == null) {
+                speakText("Bluetooth not supported on this device")
+                return
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // On Android 12+, we need to request user permission
+                val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                startActivity(intent)
+                speakText("Opening Bluetooth settings. Please ${if (enable) "enable" else "disable"} Bluetooth manually.")
+            } else {
+                @Suppress("DEPRECATION")
+                if (enable && !bluetoothAdapter.isEnabled) {
+                    @Suppress("DEPRECATION")
+                    bluetoothAdapter.enable()
+                    speakText("Enabling Bluetooth")
+                } else if (!enable && bluetoothAdapter.isEnabled) {
+                    @Suppress("DEPRECATION")
+                    bluetoothAdapter.disable()
+                    speakText("Disabling Bluetooth")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error toggling Bluetooth", e)
+            speakText("Unable to control Bluetooth")
+        }
+    }
+
+    private fun adjustVolume(increase: Boolean) {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val direction = if (increase) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+            audioManager.adjustVolume(direction, AudioManager.FLAG_SHOW_UI)
+            speakText("Volume ${if (increase) "increased" else "decreased"}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error adjusting volume", e)
+            speakText("Unable to adjust volume")
+        }
+    }
+
+    private fun muteDevice() {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            audioManager.adjustVolume(AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI)
+            speakText("Device muted")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error muting device", e)
+            speakText("Unable to mute device")
+        }
+    }
+
+    private fun checkDeviceStatus() {
+        try {
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+            val nfcAdapter = NfcAdapter.getDefaultAdapter(this)
+            
+            val wifiStatus = if (wifiManager.isWifiEnabled) "enabled" else "disabled"
+            val bluetoothStatus = if (bluetoothManager.adapter?.isEnabled == true) "enabled" else "disabled"
+            val nfcStatus = if (nfcAdapter?.isEnabled == true) "enabled" else "disabled or not available"
+            
+            val statusReport = "Device Status: WiFi is $wifiStatus, Bluetooth is $bluetoothStatus, NFC is $nfcStatus"
+            txtResponse.text = statusReport
+            speakText(statusReport)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking device status", e)
+            speakText("Unable to check device status")
+        }
+    }
+
+    private fun checkNFCStatus() {
+        try {
+            val nfcAdapter = NfcAdapter.getDefaultAdapter(this)
+            val status = when {
+                nfcAdapter == null -> "NFC is not available on this device"
+                nfcAdapter.isEnabled -> "NFC is enabled"
+                else -> "NFC is disabled"
+            }
+            speakText(status)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking NFC status", e)
+            speakText("Unable to check NFC status")
+        }
+    }
+
+    private fun sendTestSMS() {
+        try {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) 
+                == PackageManager.PERMISSION_GRANTED) {
+                
+                // Only send to a predefined test number for safety
+                val testNumber = "1234567890" // Replace with your test number
+                val message = "Test message from Ultron AI - ${Date()}"
+                
+                val smsManager = SmsManager.getDefault()
+                smsManager.sendTextMessage(testNumber, null, message, null, null)
+                speakText("Test SMS sent successfully")
+                
+            } else {
+                speakText("SMS permission not granted")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending SMS", e)
+            speakText("Failed to send SMS")
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        
+        if (requestCode == PERMISSIONS_REQUEST_CODE) {
+            val deniedPermissions = permissions.filterIndexed { index, _ ->
+                grantResults[index] != PackageManager.PERMISSION_GRANTED
+            }
+            
+            if (deniedPermissions.isNotEmpty()) {
+                Toast.makeText(
+                    this,
+                    "Some features may not work without permissions: ${deniedPermissions.joinToString()}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        if (::textToSpeech.isInitialized) {
+            textToSpeech.stop()
+            textToSpeech.shutdown()
+        }
+        super.onDestroy()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (::textToSpeech.isInitialized && textToSpeech.isSpeaking) {
+            textToSpeech.stop()
+        }
+    }
+}
