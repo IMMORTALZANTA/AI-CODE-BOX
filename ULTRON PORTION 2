@@ -1,0 +1,322 @@
+// ===================== Ultron Enhanced - Portion 2: Data Classes & Models =====================
+
+// ==================== DATA CLASSES ====================
+
+data class NetworkDevice(
+    val name: String,
+    val ipAddress: String,
+    val macAddress: String,
+    val deviceType: String,
+    val isOnline: Boolean,
+    val lastSeen: Long,
+    val capabilities: List<String> = emptyList()
+)
+
+data class UltronPlugin(
+    val id: String,
+    val name: String,
+    val description: String,
+    val version: String,
+    val author: String,
+    val iconRes: Int,
+    val isEnabled: Boolean,
+    val permissions: List<String>,
+    val commands: List<String>,
+    val pluginClass: String
+)
+
+data class ConversationEntry(
+    val id: String,
+    val timestamp: Long,
+    val userInput: String,
+    val claudeResponse: String,
+    val actionsTaken: List<String>,
+    val embedding: FloatArray? = null
+)
+
+data class DeviceAuthPair(
+    val deviceId: String,
+    val deviceName: String,
+    val publicKey: String,
+    val pairTimestamp: Long,
+    val isActive: Boolean,
+    val permissions: List<String>
+)
+
+data class FileAccessRequest(
+    val fileName: String,
+    val filePath: String,
+    val fileType: String,
+    val size: Long,
+    val permission: FilePermission
+)
+
+enum class FilePermission {
+    READ_ONLY,
+    READ_WRITE,
+    EXECUTE,
+    FULL_ACCESS
+}
+
+data class WebSearchResult(
+    val query: String,
+    val results: List<SearchResult>,
+    val timestamp: Long
+)
+
+data class SearchResult(
+    val title: String,
+    val url: String,
+    val snippet: String,
+    val source: String
+)
+
+data class IoTCommand(
+    val deviceId: String,
+    val command: String,
+    val parameters: Map<String, Any>,
+    val timestamp: Long
+)
+
+// ==================== DATABASE HELPER ====================
+
+class UltronDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+    
+    companion object {
+        const val DATABASE_NAME = "ultron_cache.db"
+        const val DATABASE_VERSION = 1
+        
+        // Tables
+        const val TABLE_CONVERSATIONS = "conversations"
+        const val TABLE_EMBEDDINGS = "embeddings"
+        const val TABLE_DEVICE_AUTH = "device_auth"
+        const val TABLE_PLUGINS = "plugins"
+        const val TABLE_NETWORK_DEVICES = "network_devices"
+        
+        // Conversation table columns
+        const val COL_CONV_ID = "id"
+        const val COL_CONV_TIMESTAMP = "timestamp"
+        const val COL_CONV_USER_INPUT = "user_input"
+        const val COL_CONV_CLAUDE_RESPONSE = "claude_response"
+        const val COL_CONV_ACTIONS = "actions_taken"
+        
+        // Embeddings table columns
+        const val COL_EMB_ID = "id"
+        const val COL_EMB_TEXT = "text"
+        const val COL_EMB_EMBEDDING = "embedding"
+        const val COL_EMB_TIMESTAMP = "timestamp"
+        
+        // Device auth table columns
+        const val COL_AUTH_DEVICE_ID = "device_id"
+        const val COL_AUTH_DEVICE_NAME = "device_name"
+        const val COL_AUTH_PUBLIC_KEY = "public_key"
+        const val COL_AUTH_TIMESTAMP = "pair_timestamp"
+        const val COL_AUTH_IS_ACTIVE = "is_active"
+        const val COL_AUTH_PERMISSIONS = "permissions"
+    }
+
+    override fun onCreate(db: SQLiteDatabase) {
+        // Create conversations table
+        val createConversationsTable = """
+            CREATE TABLE $TABLE_CONVERSATIONS (
+                $COL_CONV_ID TEXT PRIMARY KEY,
+                $COL_CONV_TIMESTAMP INTEGER,
+                $COL_CONV_USER_INPUT TEXT,
+                $COL_CONV_CLAUDE_RESPONSE TEXT,
+                $COL_CONV_ACTIONS TEXT
+            )
+        """.trimIndent()
+
+        // Create embeddings table
+        val createEmbeddingsTable = """
+            CREATE TABLE $TABLE_EMBEDDINGS (
+                $COL_EMB_ID TEXT PRIMARY KEY,
+                $COL_EMB_TEXT TEXT,
+                $COL_EMB_EMBEDDING BLOB,
+                $COL_EMB_TIMESTAMP INTEGER
+            )
+        """.trimIndent()
+
+        // Create device auth table
+        val createDeviceAuthTable = """
+            CREATE TABLE $TABLE_DEVICE_AUTH (
+                $COL_AUTH_DEVICE_ID TEXT PRIMARY KEY,
+                $COL_AUTH_DEVICE_NAME TEXT,
+                $COL_AUTH_PUBLIC_KEY TEXT,
+                $COL_AUTH_TIMESTAMP INTEGER,
+                $COL_AUTH_IS_ACTIVE INTEGER,
+                $COL_AUTH_PERMISSIONS TEXT
+            )
+        """.trimIndent()
+
+        // Create plugins table
+        val createPluginsTable = """
+            CREATE TABLE $TABLE_PLUGINS (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                description TEXT,
+                version TEXT,
+                author TEXT,
+                icon_res INTEGER,
+                is_enabled INTEGER,
+                permissions TEXT,
+                commands TEXT,
+                plugin_class TEXT
+            )
+        """.trimIndent()
+
+        // Create network devices table
+        val createNetworkDevicesTable = """
+            CREATE TABLE $TABLE_NETWORK_DEVICES (
+                ip_address TEXT PRIMARY KEY,
+                name TEXT,
+                mac_address TEXT,
+                device_type TEXT,
+                is_online INTEGER,
+                last_seen INTEGER,
+                capabilities TEXT
+            )
+        """.trimIndent()
+
+        db.execSQL(createConversationsTable)
+        db.execSQL(createEmbeddingsTable)
+        db.execSQL(createDeviceAuthTable)
+        db.execSQL(createPluginsTable)
+        db.execSQL(createNetworkDevicesTable)
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        db.execSQL("DROP TABLE IF EXISTS $TABLE_CONVERSATIONS")
+        db.execSQL("DROP TABLE IF EXISTS $TABLE_EMBEDDINGS")
+        db.execSQL("DROP TABLE IF EXISTS $TABLE_DEVICE_AUTH")
+        db.execSQL("DROP TABLE IF EXISTS $TABLE_PLUGINS")
+        db.execSQL("DROP TABLE IF EXISTS $TABLE_NETWORK_DEVICES")
+        onCreate(db)
+    }
+}
+
+// ==================== ADAPTER CLASSES ====================
+
+class PluginAdapter(
+    private val plugins: List<UltronPlugin>,
+    private val onPluginClick: (UltronPlugin) -> Unit
+) : RecyclerView.Adapter<PluginAdapter.PluginViewHolder>() {
+
+    class PluginViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val pluginName: TextView = view.findViewById(R.id.pluginName)
+        val pluginDescription: TextView = view.findViewById(R.id.pluginDescription)
+        val pluginIcon: ImageView = view.findViewById(R.id.pluginIcon)
+        val pluginSwitch: Switch = view.findViewById(R.id.pluginSwitch)
+        val pluginExecute: Button = view.findViewById(R.id.pluginExecute)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PluginViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_plugin, parent, false)
+        return PluginViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: PluginViewHolder, position: Int) {
+        val plugin = plugins[position]
+        holder.pluginName.text = plugin.name
+        holder.pluginDescription.text = plugin.description
+        holder.pluginIcon.setImageResource(plugin.iconRes)
+        holder.pluginSwitch.isChecked = plugin.isEnabled
+        
+        holder.pluginExecute.setOnClickListener {
+            onPluginClick(plugin)
+        }
+        
+        holder.pluginSwitch.setOnCheckedChangeListener { _, isChecked ->
+            // Handle plugin enable/disable
+        }
+    }
+
+    override fun getItemCount() = plugins.size
+}
+
+class NetworkDeviceAdapter(
+    private val context: Context,
+    private val devices: List<NetworkDevice>
+) : ArrayAdapter<NetworkDevice>(context, R.layout.item_network_device, devices) {
+
+    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+        val view = convertView ?: LayoutInflater.from(context)
+            .inflate(R.layout.item_network_device, parent, false)
+        
+        val device = devices[position]
+        
+        view.findViewById<TextView>(R.id.deviceName).text = device.name
+        view.findViewById<TextView>(R.id.deviceIP).text = device.ipAddress
+        view.findViewById<TextView>(R.id.deviceType).text = device.deviceType
+        
+        val statusIndicator = view.findViewById<View>(R.id.statusIndicator)
+        statusIndicator.setBackgroundColor(
+            if (device.isOnline) 
+                ContextCompat.getColor(context, android.R.color.holo_green_light)
+            else 
+                ContextCompat.getColor(context, android.R.color.holo_red_light)
+        )
+        
+        return view
+    }
+}
+
+// ==================== UTILITY CLASSES ====================
+
+class NetworkUtils {
+    companion object {
+        fun isValidIP(ip: String): Boolean {
+            return try {
+                InetAddress.getByName(ip) != null
+            } catch (e: Exception) {
+                false
+            }
+        }
+        
+        fun getLocalIPRange(): String {
+            return try {
+                val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                val dhcp = wifiManager.dhcpInfo
+                val ip = dhcp.ipAddress
+                String.format("%d.%d.%d.", 
+                    ip and 0xff, 
+                    ip shr 8 and 0xff, 
+                    ip shr 16 and 0xff
+                )
+            } catch (e: Exception) {
+                "192.168.1."
+            }
+        }
+    }
+}
+
+object CryptoUtils {
+    fun generateDeviceId(): String {
+        return UUID.randomUUID().toString()
+    }
+    
+    fun generateQRData(deviceId: String, publicKey: String): String {
+        val data = JSONObject()
+        data.put("deviceId", deviceId)
+        data.put("publicKey", publicKey)
+        data.put("timestamp", System.currentTimeMillis())
+        return data.toString()
+    }
+    
+    fun parseQRData(qrContent: String): DeviceAuthPair? {
+        return try {
+            val json = JSONObject(qrContent)
+            DeviceAuthPair(
+                deviceId = json.getString("deviceId"),
+                deviceName = "Unknown Device",
+                publicKey = json.getString("publicKey"),
+                pairTimestamp = json.getLong("timestamp"),
+                isActive = true,
+                permissions = emptyList()
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+}
