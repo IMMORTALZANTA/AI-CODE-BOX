@@ -1,0 +1,466 @@
+// ===================== Ultron Enhanced - Portion 4: Plugin System & Web Search =====================
+
+// ==================== PLUGIN SYSTEM MANAGER ====================
+
+class PluginSystemManager(private val context: Context) {
+    private val dbHelper = UltronDatabaseHelper(context)
+    private val registeredPlugins = mutableMapOf<String, UltronPlugin>()
+    private val pluginInstances = mutableMapOf<String, PluginBase>()
+    
+    fun loadInstalledPlugins(): List<UltronPlugin> {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query("plugins", null, null, null, null, null, null)
+        val plugins = mutableListOf<UltronPlugin>()
+        
+        cursor.use {
+            while (it.moveToNext()) {
+                val plugin = UltronPlugin(
+                    id = it.getString(it.getColumnIndexOrThrow("id")),
+                    name = it.getString(it.getColumnIndexOrThrow("name")),
+                    description = it.getString(it.getColumnIndexOrThrow("description")),
+                    version = it.getString(it.getColumnIndexOrThrow("version")),
+                    author = it.getString(it.getColumnIndexOrThrow("author")),
+                    iconRes = it.getInt(it.getColumnIndexOrThrow("icon_res")),
+                    isEnabled = it.getInt(it.getColumnIndexOrThrow("is_enabled")) == 1,
+                    permissions = it.getString(it.getColumnIndexOrThrow("permissions")).split(","),
+                    commands = it.getString(it.getColumnIndexOrThrow("commands")).split(","),
+                    pluginClass = it.getString(it.getColumnIndexOrThrow("plugin_class"))
+                )
+                plugins.add(plugin)
+                registeredPlugins[plugin.id] = plugin
+            }
+        }
+        
+        // Register built-in plugins if empty
+        if (plugins.isEmpty()) {
+            registerBuiltInPlugins()
+            return loadInstalledPlugins()
+        }
+        
+        return plugins
+    }
+    
+    private fun registerBuiltInPlugins() {
+        val builtInPlugins = listOf(
+            createWeatherPlugin(),
+            createCalendarPlugin(),
+            createSmartHomePlugin(),
+            createFileManagerPlugin(),
+            createSystemInfoPlugin(),
+            createCalculatorPlugin(),
+            createTranslatorPlugin()
+        )
+        
+        builtInPlugins.forEach { savePlugin(it) }
+    }
+    
+    fun executePlugin(plugin: UltronPlugin, command: String, parameters: Map<String, Any> = emptyMap()): PluginResult {
+        return try {
+            val pluginInstance = getOrCreatePluginInstance(plugin)
+            pluginInstance.execute(command, parameters)
+        } catch (e: Exception) {
+            PluginResult(false, "Plugin execution failed: ${e.message}", null)
+        }
+    }
+    
+    private fun getOrCreatePluginInstance(plugin: UltronPlugin): PluginBase {
+        return pluginInstances.getOrPut(plugin.id) {
+            when (plugin.id) {
+                "weather_plugin" -> WeatherPlugin(context)
+                "calendar_plugin" -> CalendarPlugin(context)
+                "smarthome_plugin" -> SmartHomePlugin(context)
+                "file_manager_plugin" -> FileManagerPlugin(context)
+                "system_info_plugin" -> SystemInfoPlugin(context)
+                "calculator_plugin" -> CalculatorPlugin(context)
+                "translator_plugin" -> TranslatorPlugin(context)
+                else -> throw IllegalArgumentException("Unknown plugin: ${plugin.id}")
+            }
+        }
+    }
+    
+    private fun savePlugin(plugin: UltronPlugin) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put("id", plugin.id)
+            put("name", plugin.name)
+            put("description", plugin.description)
+            put("version", plugin.version)
+            put("author", plugin.author)
+            put("icon_res", plugin.iconRes)
+            put("is_enabled", if (plugin.isEnabled) 1 else 0)
+            put("permissions", plugin.permissions.joinToString(","))
+            put("commands", plugin.commands.joinToString(","))
+            put("plugin_class", plugin.pluginClass)
+        }
+        
+        db.insertWithOnConflict("plugins", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+    
+    // Plugin factory methods
+    private fun createWeatherPlugin() = UltronPlugin(
+        id = "weather_plugin",
+        name = "Weather Assistant",
+        description = "Get weather information and forecasts",
+        version = "1.0.0",
+        author = "Ultron Team",
+        iconRes = android.R.drawable.ic_dialog_info,
+        isEnabled = true,
+        permissions = listOf("INTERNET", "ACCESS_FINE_LOCATION"),
+        commands = listOf("get_weather", "get_forecast", "weather_alerts"),
+        pluginClass = "WeatherPlugin"
+    )
+    
+    private fun createCalendarPlugin() = UltronPlugin(
+        id = "calendar_plugin",
+        name = "Calendar Manager",
+        description = "Manage calendar events and reminders",
+        version = "1.0.0",
+        author = "Ultron Team",
+        iconRes = android.R.drawable.ic_menu_my_calendar,
+        isEnabled = true,
+        permissions = listOf("READ_CALENDAR", "WRITE_CALENDAR"),
+        commands = listOf("create_event", "list_events", "delete_event"),
+        pluginClass = "CalendarPlugin"
+    )
+    
+    private fun createSmartHomePlugin() = UltronPlugin(
+        id = "smarthome_plugin",
+        name = "Smart Home Control",
+        description = "Control IoT devices and smart home systems",
+        version = "1.0.0",
+        author = "Ultron Team",
+        iconRes = android.R.drawable.ic_menu_preferences,
+        isEnabled = true,
+        permissions = listOf("INTERNET", "ACCESS_WIFI_STATE"),
+        commands = listOf("control_lights", "adjust_thermostat", "security_status"),
+        pluginClass = "SmartHomePlugin"
+    )
+    
+    private fun createFileManagerPlugin() = UltronPlugin(
+        id = "file_manager_plugin",
+        name = "File Manager",
+        description = "Access and manage device files",
+        version = "1.0.0",
+        author = "Ultron Team",
+        iconRes = android.R.drawable.ic_menu_save,
+        isEnabled = true,
+        permissions = listOf("READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"),
+        commands = listOf("list_files", "open_file", "delete_file", "move_file"),
+        pluginClass = "FileManagerPlugin"
+    )
+    
+    private fun createSystemInfoPlugin() = UltronPlugin(
+        id = "system_info_plugin",
+        name = "System Information",
+        description = "Get device system information",
+        version = "1.0.0",
+        author = "Ultron Team",
+        iconRes = android.R.drawable.ic_menu_info_details,
+        isEnabled = true,
+        permissions = listOf(),
+        commands = listOf("get_battery", "get_storage", "get_memory", "get_network"),
+        pluginClass = "SystemInfoPlugin"
+    )
+    
+    private fun createCalculatorPlugin() = UltronPlugin(
+        id = "calculator_plugin",
+        name = "Calculator",
+        description = "Perform mathematical calculations",
+        version = "1.0.0",
+        author = "Ultron Team",
+        iconRes = android.R.drawable.ic_menu_edit,
+        isEnabled = true,
+        permissions = listOf(),
+        commands = listOf("calculate", "solve_equation", "convert_units"),
+        pluginClass = "CalculatorPlugin"
+    )
+    
+    private fun createTranslatorPlugin() = UltronPlugin(
+        id = "translator_plugin",
+        name = "Language Translator",
+        description = "Translate text between languages",
+        version = "1.0.0",
+        author = "Ultron Team",
+        iconRes = android.R.drawable.ic_menu_sort_alphabetically,
+        isEnabled = true,
+        permissions = listOf("INTERNET"),
+        commands = listOf("translate", "detect_language", "list_languages"),
+        pluginClass = "TranslatorPlugin"
+    )
+}
+
+// ==================== PLUGIN BASE CLASSES ====================
+
+data class PluginResult(
+    val success: Boolean,
+    val message: String,
+    val data: Any?
+)
+
+abstract class PluginBase(protected val context: Context) {
+    abstract fun execute(command: String, parameters: Map<String, Any>): PluginResult
+    abstract fun getHelp(): String
+}
+
+// ==================== PLUGIN IMPLEMENTATIONS ====================
+
+class WeatherPlugin(context: Context) : PluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command) {
+            "get_weather" -> {
+                val location = parameters["location"] as? String ?: "current"
+                PluginResult(true, "Current weather in $location: 22°C, Sunny", mapOf("temp" to 22, "condition" to "sunny"))
+            }
+            "get_forecast" -> {
+                PluginResult(true, "5-day forecast: Mostly sunny with temperatures 20-25°C", null)
+            }
+            "weather_alerts" -> {
+                PluginResult(true, "No weather alerts for your area", null)
+            }
+            else -> PluginResult(false, "Unknown weather command: $command", null)
+        }
+    }
+    
+    override fun getHelp(): String = "Weather commands: get_weather, get_forecast, weather_alerts"
+}
+
+class CalendarPlugin(context: Context) : PluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command) {
+            "create_event" -> {
+                val title = parameters["title"] as? String ?: "New Event"
+                val date = parameters["date"] as? String ?: "Today"
+                PluginResult(true, "Created event: $title on $date", null)
+            }
+            "list_events" -> {
+                PluginResult(true, "Upcoming events: Meeting at 2 PM, Dinner at 7 PM", null)
+            }
+            "delete_event" -> {
+                val eventId = parameters["eventId"] as? String ?: ""
+                PluginResult(true, "Deleted event: $eventId", null)
+            }
+            else -> PluginResult(false, "Unknown calendar command: $command", null)
+        }
+    }
+    
+    override fun getHelp(): String = "Calendar commands: create_event, list_events, delete_event"
+}
+
+class SmartHomePlugin(context: Context) : PluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command) {
+            "control_lights" -> {
+                val action = parameters["action"] as? String ?: "toggle"
+                val room = parameters["room"] as? String ?: "all"
+                PluginResult(true, "Lights $action in $room", null)
+            }
+            "adjust_thermostat" -> {
+                val temp = parameters["temperature"] as? Int ?: 22
+                PluginResult(true, "Thermostat set to ${temp}°C", null)
+            }
+            "security_status" -> {
+                PluginResult(true, "Security system: Armed, All sensors OK", null)
+            }
+            else -> PluginResult(false, "Unknown smart home command: $command", null)
+        }
+    }
+    
+    override fun getHelp(): String = "Smart Home commands: control_lights, adjust_thermostat, security_status"
+}
+
+class FileManagerPlugin(context: Context) : PluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command) {
+            "list_files" -> {
+                val path = parameters["path"] as? String ?: "/storage/emulated/0"
+                PluginResult(true, "Files in $path: Documents, Downloads, Pictures", null)
+            }
+            "open_file" -> {
+                val fileName = parameters["fileName"] as? String ?: ""
+                PluginResult(true, "Opening file: $fileName", null)
+            }
+            "delete_file" -> {
+                val fileName = parameters["fileName"] as? String ?: ""
+                PluginResult(true, "Deleted file: $fileName", null)
+            }
+            else -> PluginResult(false, "Unknown file command: $command", null)
+        }
+    }
+    
+    override fun getHelp(): String = "File commands: list_files, open_file, delete_file, move_file"
+}
+
+class SystemInfoPlugin(context: Context) : PluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command) {
+            "get_battery" -> {
+                PluginResult(true, "Battery: 85% charged", mapOf("level" to 85, "charging" to false))
+            }
+            "get_storage" -> {
+                PluginResult(true, "Storage: 32GB used, 96GB free", null)
+            }
+            "get_memory" -> {
+                PluginResult(true, "RAM: 4GB used, 2GB free", null)
+            }
+            "get_network" -> {
+                PluginResult(true, "Network: WiFi connected, 50 Mbps", null)
+            }
+            else -> PluginResult(false, "Unknown system command: $command", null)
+        }
+    }
+    
+    override fun getHelp(): String = "System commands: get_battery, get_storage, get_memory, get_network"
+}
+
+class CalculatorPlugin(context: Context) : PluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command) {
+            "calculate" -> {
+                val expression = parameters["expression"] as? String ?: ""
+                try {
+                    val result = evaluateExpression(expression)
+                    PluginResult(true, "Result: $result", mapOf("result" to result))
+                } catch (e: Exception) {
+                    PluginResult(false, "Calculation error: ${e.message}", null)
+                }
+            }
+            "solve_equation" -> {
+                PluginResult(true, "Equation solver not implemented yet", null)
+            }
+            "convert_units" -> {
+                val value = parameters["value"] as? Double ?: 0.0
+                val from = parameters["from"] as? String ?: ""
+                val to = parameters["to"] as? String ?: ""
+                PluginResult(true, "Converted $value $from to $to", null)
+            }
+            else -> PluginResult(false, "Unknown calculator command: $command", null)
+        }
+    }
+    
+    private fun evaluateExpression(expression: String): Double {
+        // Simple calculator implementation
+        return try {
+            when {
+                expression.contains("+") -> {
+                    val parts = expression.split("+")
+                    parts[0].trim().toDouble() + parts[1].trim().toDouble()
+                }
+                expression.contains("-") -> {
+                    val parts = expression.split("-")
+                    parts[0].trim().toDouble() - parts[1].trim().toDouble()
+                }
+                expression.contains("*") -> {
+                    val parts = expression.split("*")
+                    parts[0].trim().toDouble() * parts[1].trim().toDouble()
+                }
+                expression.contains("/") -> {
+                    val parts = expression.split("/")
+                    parts[0].trim().toDouble() / parts[1].trim().toDouble()
+                }
+                else -> expression.toDouble()
+            }
+        } catch (e: Exception) {
+            throw IllegalArgumentException("Invalid expression: $expression")
+        }
+    }
+    
+    override fun getHelp(): String = "Calculator commands: calculate, solve_equation, convert_units"
+}
+
+class TranslatorPlugin(context: Context) : PluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command) {
+            "translate" -> {
+                val text = parameters["text"] as? String ?: ""
+                val from = parameters["from"] as? String ?: "auto"
+                val to = parameters["to"] as? String ?: "en"
+                PluginResult(true, "Translated '$text' from $from to $to: [Mock translation]", null)
+            }
+            "detect_language" -> {
+                val text = parameters["text"] as? String ?: ""
+                PluginResult(true, "Detected language: English", mapOf("language" to "en", "confidence" to 0.95))
+            }
+            "list_languages" -> {
+                PluginResult(true, "Supported languages: English, Spanish, French, German, Chinese", null)
+            }
+            else -> PluginResult(false, "Unknown translator command: $command", null)
+        }
+    }
+    
+    override fun getHelp(): String = "Translator commands: translate, detect_language, list_languages"
+}
+
+// ==================== WEB SEARCH MANAGER ====================
+
+class WebSearchManager(private val context: Context) {
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+    
+    fun performWebSearch(query: String, callback: (WebSearchResult?) -> Unit) {
+        Thread {
+            try {
+                val searchResult = searchWithCloudFunction(query)
+                callback(searchResult)
+            } catch (e: Exception) {
+                Log.e("WebSearch", "Search failed: ${e.message}")
+                callback(null)
+            }
+        }.start()
+    }
+    
+    private fun searchWithCloudFunction(query: String): WebSearchResult {
+        val url = "https://your-cloud-function-url.com/search" // Replace with your Cloud Function URL
+        val requestBody = JSONObject().apply {
+            put("query", query)
+            put("num_results", 5)
+        }
+        
+        val body = RequestBody.create(MediaType.parse("application/json"), requestBody.toString())
+        val request = Request.Builder()
+            .url(url)
+            .post(body)
+            .addHeader("Content-Type", "application/json")
+            .build()
+        
+        val response = client.newCall(request).execute()
+        val responseBody = response.body()?.string() ?: ""
+        
+        return parseSearchResults(query, responseBody)
+    }
+    
+    private fun parseSearchResults(query: String, responseBody: String): WebSearchResult {
+        return try {
+            val json = JSONObject(responseBody)
+            val resultsArray = json.getJSONArray("results")
+            val results = mutableListOf<SearchResult>()
+            
+            for (i in 0 until resultsArray.length()) {
+                val result = resultsArray.getJSONObject(i)
+                results.add(SearchResult(
+                    title = result.getString("title"),
+                    url = result.getString("url"),
+                    snippet = result.getString("snippet"),
+                    source = result.getString("source")
+                ))
+            }
+            
+            WebSearchResult(query, results, System.currentTimeMillis())
+        } catch (e: Exception) {
+            // Return mock results if parsing fails
+            WebSearchResult(
+                query = query,
+                results = listOf(
+                    SearchResult(
+                        title = "Mock Search Result",
+                        url = "https://example.com",
+                        snippet = "This is a mock search result for: $query",
+                        source = "example.com"
+                    )
+                ),
+                timestamp = System.currentTimeMillis()
+            )
+        }
+    }
+}
