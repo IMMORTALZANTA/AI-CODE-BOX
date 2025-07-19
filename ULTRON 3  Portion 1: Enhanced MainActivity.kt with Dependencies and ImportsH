@@ -1,0 +1,174 @@
+// ===================== Ultron AI Assistant Enhanced (MainActivity.kt) =====================
+// ✅ Advanced AI Assistant with Device Control, IoT, Plugins, File Access, Web Search
+// New Features: QR/NFC Pairing, Plugin System, Local Embeddings, GUI Panels, Home Network Control
+
+package com.example.ultronai
+
+import android.Manifest
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+import android.net.ConnectivityManager
+import android.net.NetworkInfo
+import android.net.Uri
+import android.net.wifi.WifiManager
+import android.nfc.NfcAdapter
+import android.nfc.Tag
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
+import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
+import android.telephony.SmsManager
+import android.util.Log
+import android.view.View
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import com.journeyapps.barcodescanner.CaptureActivity
+import okhttp3.*
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.*
+import java.net.*
+import java.util.*
+import java.util.concurrent.TimeUnit
+import kotlin.collections.ArrayList
+import kotlin.collections.HashMap
+
+class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+
+    // ==================== CONSTANTS & REQUEST CODES ====================
+    private val REQUEST_CODE_SPEECH_INPUT = 100
+    private val REQUEST_CODE_QR_SCAN = 101
+    private val REQUEST_CODE_FILE_SELECT = 102
+    private val REQUEST_CODE_IMAGE_CAPTURE = 103
+    private val REQUEST_PERMISSION_ALL = 104
+    
+    // ==================== CORE COMPONENTS ====================
+    private lateinit var textToSpeech: TextToSpeech
+    private lateinit var txtResponse: TextView
+    private lateinit var consoleOutput: TextView
+    private lateinit var deviceStatusPanel: LinearLayout
+    private lateinit var pluginRecyclerView: RecyclerView
+    private lateinit var fileAccessPanel: LinearLayout
+    private lateinit var networkDevicesList: ListView
+    private lateinit var embeddingsCache: LocalEmbeddingsManager
+    private lateinit var deviceAuth: DeviceAuthManager
+    private lateinit var homeNetwork: HomeNetworkController
+    private lateinit var pluginSystem: PluginSystemManager
+    
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    // ==================== CONFIGURATION ====================
+    private val API_KEY = "YOUR_CLAUDE_API_KEY"
+    private val CLOUD_FUNCTION_URL = "https://your-cloud-function-url.com/search"
+    
+    // ==================== DATA STORAGE ====================
+    private var connectedDevices = mutableListOf<NetworkDevice>()
+    private var installedPlugins = mutableListOf<UltronPlugin>()
+    private var conversationHistory = mutableListOf<ConversationEntry>()
+    private var currentFileUri: Uri? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main_enhanced)
+
+        initializeComponents()
+        setupPermissions()
+        initializeManagers()
+        setupUIListeners()
+        startBackgroundServices()
+    }
+
+    private fun initializeComponents() {
+        textToSpeech = TextToSpeech(this, this)
+        txtResponse = findViewById(R.id.txtResponse)
+        consoleOutput = findViewById(R.id.consoleOutput)
+        deviceStatusPanel = findViewById(R.id.deviceStatusPanel)
+        pluginRecyclerView = findViewById(R.id.pluginRecyclerView)
+        fileAccessPanel = findViewById(R.id.fileAccessPanel)
+        networkDevicesList = findViewById(R.id.networkDevicesList)
+        
+        // Setup RecyclerView for plugins
+        pluginRecyclerView.layoutManager = LinearLayoutManager(this)
+        pluginRecyclerView.adapter = PluginAdapter(installedPlugins) { plugin ->
+            executePlugin(plugin)
+        }
+    }
+
+    private fun setupPermissions() {
+        val permissions = arrayOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.INTERNET,
+            Manifest.permission.BLUETOOTH,
+            Manifest.permission.BLUETOOTH_ADMIN,
+            Manifest.permission.CHANGE_WIFI_STATE,
+            Manifest.permission.ACCESS_WIFI_STATE,
+            Manifest.permission.ACCESS_NETWORK_STATE,
+            Manifest.permission.NFC,
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            Manifest.permission.CAMERA,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missing.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_PERMISSION_ALL)
+        }
+    }
+
+    private fun initializeManagers() {
+        embeddingsCache = LocalEmbeddingsManager(this)
+        deviceAuth = DeviceAuthManager(this)
+        homeNetwork = HomeNetworkController(this) { devices ->
+            runOnUiThread {
+                connectedDevices.clear()
+                connectedDevices.addAll(devices)
+                updateNetworkDevicesUI()
+            }
+        }
+        pluginSystem = PluginSystemManager(this)
+        loadInstalledPlugins()
+    }
+
+    private fun setupUIListeners() {
+        findViewById<Button>(R.id.btnSpeak).setOnClickListener { startVoiceInput() }
+        findViewById<Button>(R.id.btnQRAuth).setOnClickListener { startQRAuth() }
+        findViewById<Button>(R.id.btnFileAccess).setOnClickListener { openFileSelector() }
+        findViewById<Button>(R.id.btnWebSearch).setOnClickListener { toggleWebSearch() }
+        findViewById<Button>(R.id.btnScanNetwork).setOnClickListener { scanHomeNetwork() }
+        findViewById<Button>(R.id.btnClearConsole).setOnClickListener { clearConsole() }
+        findViewById<Switch>(R.id.switchWiFi).setOnCheckedChangeListener { _, isChecked -> 
+            toggleWiFi(isChecked) 
+        }
+        findViewById<Switch>(R.id.switchBluetooth).setOnCheckedChangeListener { _, isChecked -> 
+            toggleBluetooth(isChecked) 
+        }
+    }
+
+    private fun startBackgroundServices() {
+        homeNetwork.startNetworkDiscovery()
+        updateDeviceStatusPanel()
+        logToConsole("Ultron Enhanced initialized successfully")
+    }
