@@ -1,0 +1,360 @@
+// ===================== Ultron Enhanced - Portion 3: Manager Classes Implementation =====================
+
+// ==================== LOCAL EMBEDDINGS MANAGER ====================
+
+class LocalEmbeddingsManager(private val context: Context) {
+    private val dbHelper = UltronDatabaseHelper(context)
+    private val embeddingCache = mutableMapOf<String, FloatArray>()
+    
+    fun saveConversation(userInput: String, claudeResponse: String, actionsTaken: List<String>) {
+        val db = dbHelper.writableDatabase
+        val conversationId = UUID.randomUUID().toString()
+        val timestamp = System.currentTimeMillis()
+        
+        val values = ContentValues().apply {
+            put(UltronDatabaseHelper.COL_CONV_ID, conversationId)
+            put(UltronDatabaseHelper.COL_CONV_TIMESTAMP, timestamp)
+            put(UltronDatabaseHelper.COL_CONV_USER_INPUT, userInput)
+            put(UltronDatabaseHelper.COL_CONV_CLAUDE_RESPONSE, claudeResponse)
+            put(UltronDatabaseHelper.COL_CONV_ACTIONS, actionsTaken.joinToString(";"))
+        }
+        
+        db.insert(UltronDatabaseHelper.TABLE_CONVERSATIONS, null, values)
+        
+        // Generate and store embedding for semantic search
+        generateEmbedding(userInput, conversationId)
+    }
+    
+    private fun generateEmbedding(text: String, conversationId: String) {
+        // Simple embedding generation (in production, use proper embedding model)
+        val embedding = createSimpleEmbedding(text)
+        embeddingCache[conversationId] = embedding
+        
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put(UltronDatabaseHelper.COL_EMB_ID, conversationId)
+            put(UltronDatabaseHelper.COL_EMB_TEXT, text)
+            put(UltronDatabaseHelper.COL_EMB_EMBEDDING, embeddingToByteArray(embedding))
+            put(UltronDatabaseHelper.COL_EMB_TIMESTAMP, System.currentTimeMillis())
+        }
+        
+        db.insert(UltronDatabaseHelper.TABLE_EMBEDDINGS, null, values)
+    }
+    
+    fun findSimilarConversations(query: String, limit: Int = 5): List<ConversationEntry> {
+        val queryEmbedding = createSimpleEmbedding(query)
+        val db = dbHelper.readableDatabase
+        
+        val cursor = db.query(
+            UltronDatabaseHelper.TABLE_CONVERSATIONS,
+            null, null, null, null, null,
+            "${UltronDatabaseHelper.COL_CONV_TIMESTAMP} DESC",
+            limit.toString()
+        )
+        
+        val results = mutableListOf<ConversationEntry>()
+        cursor.use {
+            while (it.moveToNext()) {
+                val entry = ConversationEntry(
+                    id = it.getString(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_CONV_ID)),
+                    timestamp = it.getLong(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_CONV_TIMESTAMP)),
+                    userInput = it.getString(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_CONV_USER_INPUT)),
+                    claudeResponse = it.getString(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_CONV_CLAUDE_RESPONSE)),
+                    actionsTaken = it.getString(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_CONV_ACTIONS)).split(";")
+                )
+                results.add(entry)
+            }
+        }
+        
+        return results
+    }
+    
+    private fun createSimpleEmbedding(text: String): FloatArray {
+        // Simple word-based embedding (replace with proper embedding model)
+        val words = text.toLowerCase().split(" ")
+        val embedding = FloatArray(100) { 0f }
+        
+        words.forEachIndexed { index, word ->
+            val hash = word.hashCode()
+            embedding[Math.abs(hash) % 100] += 1f / words.size
+        }
+        
+        return embedding
+    }
+    
+    private fun embeddingToByteArray(embedding: FloatArray): ByteArray {
+        val buffer = ByteBuffer.allocate(embedding.size * 4)
+        embedding.forEach { buffer.putFloat(it) }
+        return buffer.array()
+    }
+}
+
+// ==================== DEVICE AUTH MANAGER ====================
+
+class DeviceAuthManager(private val context: Context) {
+    private val dbHelper = UltronDatabaseHelper(context)
+    private val pairedDevices = mutableListOf<DeviceAuthPair>()
+    
+    fun generateQRCode(): Bitmap? {
+        return try {
+            val deviceId = CryptoUtils.generateDeviceId()
+            val publicKey = "mock_public_key_${System.currentTimeMillis()}"
+            val qrData = CryptoUtils.generateQRData(deviceId, publicKey)
+            
+            val writer = QRCodeWriter()
+            val bitMatrix = writer.encode(qrData, BarcodeFormat.QR_CODE, 512, 512)
+            val width = bitMatrix.width
+            val height = bitMatrix.height
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+            
+            for (x in 0 until width) {
+                for (y in 0 until height) {
+                    bitmap.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
+                }
+            }
+            bitmap
+        } catch (e: Exception) {
+            Log.e("DeviceAuth", "QR generation failed: ${e.message}")
+            null
+        }
+    }
+    
+    fun handleQRScan(qrContent: String): Boolean {
+        val devicePair = CryptoUtils.parseQRData(qrContent)
+        return if (devicePair != null) {
+            saveDevicePair(devicePair)
+            true
+        } else {
+            false
+        }
+    }
+    
+    fun handleNFCPair(tag: Tag): Boolean {
+        return try {
+            // Mock NFC pairing implementation
+            val deviceId = "nfc_device_${System.currentTimeMillis()}"
+            val devicePair = DeviceAuthPair(
+                deviceId = deviceId,
+                deviceName = "NFC Device",
+                publicKey = "nfc_public_key",
+                pairTimestamp = System.currentTimeMillis(),
+                isActive = true,
+                permissions = listOf("basic_control", "file_access")
+            )
+            saveDevicePair(devicePair)
+            true
+        } catch (e: Exception) {
+            Log.e("DeviceAuth", "NFC pairing failed: ${e.message}")
+            false
+        }
+    }
+    
+    private fun saveDevicePair(devicePair: DeviceAuthPair) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put(UltronDatabaseHelper.COL_AUTH_DEVICE_ID, devicePair.deviceId)
+            put(UltronDatabaseHelper.COL_AUTH_DEVICE_NAME, devicePair.deviceName)
+            put(UltronDatabaseHelper.COL_AUTH_PUBLIC_KEY, devicePair.publicKey)
+            put(UltronDatabaseHelper.COL_AUTH_TIMESTAMP, devicePair.pairTimestamp)
+            put(UltronDatabaseHelper.COL_AUTH_IS_ACTIVE, if (devicePair.isActive) 1 else 0)
+            put(UltronDatabaseHelper.COL_AUTH_PERMISSIONS, devicePair.permissions.joinToString(","))
+        }
+        
+        db.insertWithOnConflict(UltronDatabaseHelper.TABLE_DEVICE_AUTH, null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        pairedDevices.add(devicePair)
+    }
+    
+    fun getPairedDevices(): List<DeviceAuthPair> {
+        if (pairedDevices.isEmpty()) {
+            loadPairedDevices()
+        }
+        return pairedDevices.toList()
+    }
+    
+    private fun loadPairedDevices() {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(UltronDatabaseHelper.TABLE_DEVICE_AUTH, null, null, null, null, null, null)
+        
+        pairedDevices.clear()
+        cursor.use {
+            while (it.moveToNext()) {
+                val devicePair = DeviceAuthPair(
+                    deviceId = it.getString(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_AUTH_DEVICE_ID)),
+                    deviceName = it.getString(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_AUTH_DEVICE_NAME)),
+                    publicKey = it.getString(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_AUTH_PUBLIC_KEY)),
+                    pairTimestamp = it.getLong(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_AUTH_TIMESTAMP)),
+                    isActive = it.getInt(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_AUTH_IS_ACTIVE)) == 1,
+                    permissions = it.getString(it.getColumnIndexOrThrow(UltronDatabaseHelper.COL_AUTH_PERMISSIONS)).split(",")
+                )
+                pairedDevices.add(devicePair)
+            }
+        }
+    }
+}
+
+// ==================== HOME NETWORK CONTROLLER ====================
+
+class HomeNetworkController(
+    private val context: Context,
+    private val onDevicesUpdated: (List<NetworkDevice>) -> Unit
+) {
+    private val discoveredDevices = mutableListOf<NetworkDevice>()
+    private var isScanning = false
+    
+    fun startNetworkDiscovery() {
+        if (isScanning) return
+        isScanning = true
+        
+        Thread {
+            try {
+                val networkRange = getNetworkRange()
+                Log.d("NetworkScan", "Scanning range: $networkRange")
+                
+                for (i in 1..254) {
+                    val ip = "$networkRange$i"
+                    pingDevice(ip)
+                }
+                
+                // Also scan for common IoT ports
+                scanCommonIoTPorts()
+                
+                isScanning = false
+                onDevicesUpdated(discoveredDevices.toList())
+            } catch (e: Exception) {
+                Log.e("NetworkScan", "Scan error: ${e.message}")
+                isScanning = false
+            }
+        }.start()
+    }
+    
+    private fun getNetworkRange(): String {
+        return try {
+            val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val dhcp = wifiManager.dhcpInfo
+            val ip = dhcp.ipAddress
+            String.format("%d.%d.%d.", 
+                ip and 0xff, 
+                ip shr 8 and 0xff, 
+                ip shr 16 and 0xff
+            )
+        } catch (e: Exception) {
+            "192.168.1."
+        }
+    }
+    
+    private fun pingDevice(ip: String) {
+        try {
+            val address = InetAddress.getByName(ip)
+            if (address.isReachable(1000)) {
+                val hostname = try { address.hostName } catch (e: Exception) { "Unknown" }
+                val deviceType = detectDeviceType(ip)
+                val capabilities = scanDeviceCapabilities(ip)
+                
+                val device = NetworkDevice(
+                    name = hostname,
+                    ipAddress = ip,
+                    macAddress = getMacAddress(ip),
+                    deviceType = deviceType,
+                    isOnline = true,
+                    lastSeen = System.currentTimeMillis(),
+                    capabilities = capabilities
+                )
+                
+                synchronized(discoveredDevices) {
+                    discoveredDevices.add(device)
+                }
+            }
+        } catch (e: Exception) {
+            // Device not reachable
+        }
+    }
+    
+    private fun detectDeviceType(ip: String): String {
+        // Try common IoT device ports
+        return when {
+            isPortOpen(ip, 80) || isPortOpen(ip, 8080) -> "Web Device"
+            isPortOpen(ip, 1883) -> "MQTT Device"
+            isPortOpen(ip, 22) -> "Linux Device"
+            isPortOpen(ip, 23) -> "Telnet Device"
+            isPortOpen(ip, 554) -> "Camera/RTSP"
+            isPortOpen(ip, 8123) -> "Home Assistant"
+            isPortOpen(ip, 502) -> "Modbus Device"
+            else -> "Unknown Device"
+        }
+    }
+    
+    private fun isPortOpen(ip: String, port: Int): Boolean {
+        return try {
+            val socket = Socket()
+            socket.connect(InetSocketAddress(ip, port), 500)
+            socket.close()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    private fun scanDeviceCapabilities(ip: String): List<String> {
+        val capabilities = mutableListOf<String>()
+        
+        // Check common capabilities
+        if (isPortOpen(ip, 80)) capabilities.add("HTTP")
+        if (isPortOpen(ip, 443)) capabilities.add("HTTPS")
+        if (isPortOpen(ip, 1883)) capabilities.add("MQTT")
+        if (isPortOpen(ip, 22)) capabilities.add("SSH")
+        if (isPortOpen(ip, 23)) capabilities.add("Telnet")
+        if (isPortOpen(ip, 554)) capabilities.add("RTSP")
+        if (isPortOpen(ip, 502)) capabilities.add("Modbus")
+        
+        return capabilities
+    }
+    
+    private fun scanCommonIoTPorts() {
+        val commonIoTIPs = listOf(
+            "192.168.1.1", "192.168.0.1", "10.0.0.1", // Routers
+            "192.168.1.100", "192.168.1.101" // Common IoT IPs
+        )
+        
+        commonIoTIPs.forEach { ip ->
+            pingDevice(ip)
+        }
+    }
+    
+    private fun getMacAddress(ip: String): String {
+        return try {
+            // Mock MAC address - in real implementation, use ARP table
+            "00:00:00:00:00:00"
+        } catch (e: Exception) {
+            "Unknown"
+        }
+    }
+    
+    fun sendCommandToDevice(device: NetworkDevice, command: IoTCommand): Boolean {
+        return try {
+            when {
+                device.capabilities.contains("HTTP") -> sendHTTPCommand(device, command)
+                device.capabilities.contains("MQTT") -> sendMQTTCommand(device, command)
+                device.capabilities.contains("Modbus") -> sendModbusCommand(device, command)
+                else -> false
+            }
+        } catch (e: Exception) {
+            Log.e("DeviceControl", "Command failed: ${e.message}")
+            false
+        }
+    }
+    
+    private fun sendHTTPCommand(device: NetworkDevice, command: IoTCommand): Boolean {
+        // Mock HTTP command implementation
+        return true
+    }
+    
+    private fun sendMQTTCommand(device: NetworkDevice, command: IoTCommand): Boolean {
+        // Mock MQTT command implementation
+        return true
+    }
+    
+    private fun sendModbusCommand(device: NetworkDevice, command: IoTCommand): Boolean {
+        // Mock Modbus command implementation
+        return true
+    }
+}
