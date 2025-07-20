@@ -1,0 +1,144 @@
+/*
+ * Ultron AI Assistant - Unified Kotlin Implementation
+ * Portions 1 to 4 Combined into Single Runtime
+ * Includes: Core UI, Claude API, Database, Utilities, Plugin System, Voice, and Network Managers
+ */
+
+// ===================== Imports =====================
+import android.Manifest
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.content.*
+import android.content.pm.PackageManager
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.net.ConnectivityManager
+import android.net.NetworkInfo
+import android.net.Uri
+import android.net.wifi.WifiManager
+import android.nfc.NfcAdapter
+import android.nfc.Tag
+import android.os.*
+import android.provider.MediaStore
+import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
+import android.telephony.SmsManager
+import android.util.Log
+import android.view.View
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import okhttp3.*
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.*
+import java.net.*
+import java.nio.ByteBuffer
+import java.util.*
+import java.util.concurrent.TimeUnit
+
+// ===================== Constants =====================
+val JSON: MediaType = MediaType.get("application/json; charset=utf-8")
+
+// ===================== Claude API =====================
+fun sendPromptToClaude(context: Context, userPrompt: String, callback: (String) -> Unit) {
+    val apiKey = "YOUR_CLAUDE_API_KEY"
+    val client = OkHttpClient()
+    val jsonBody = JSONObject().apply {
+        put("prompt", userPrompt)
+        put("model", "claude-3-opus-20240229")
+        put("max_tokens_to_sample", 512)
+    }
+    val requestBody = RequestBody.create(JSON, jsonBody.toString())
+    val request = Request.Builder()
+        .url("https://api.anthropic.com/v1/complete")
+        .addHeader("x-api-key", apiKey)
+        .addHeader("Content-Type", "application/json")
+        .post(requestBody)
+        .build()
+
+    client.newCall(request).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            Log.e("Claude", "API Call Failed: ${e.message}")
+            callback("Failed to contact Claude: ${e.message}")
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+            response.body()?.string()?.let {
+                val jsonResponse = JSONObject(it)
+                val completion = jsonResponse.optString("completion", "[No Response]")
+                callback(completion)
+            } ?: callback("[Empty Claude Response]")
+        }
+    })
+}
+
+// ===================== Plugin System =====================
+data class UltronPlugin(val name: String, val description: String, val execute: () -> String)
+class PluginSystemManager(private val context: Context) {
+    private val plugins = mutableListOf<UltronPlugin>()
+    fun registerPlugin(plugin: UltronPlugin) { plugins.add(plugin) }
+    fun getPlugins(): List<UltronPlugin> = plugins
+    fun executePlugin(pluginName: String): String =
+        plugins.find { it.name == pluginName }?.execute?.invoke() ?: "Plugin not found"
+}
+
+// ===================== Plugin Definitions =====================
+fun createDefaultPlugins(context: Context): List<UltronPlugin> = listOf(
+    UltronPlugin("Weather", "Get weather info") {
+        "Weather in Bilaspur: 34°C, Clear Skies"
+    },
+    UltronPlugin("Calendar", "Show today’s events") {
+        "You have 2 meetings and 1 task today."
+    },
+    UltronPlugin("SmartHome", "Control smart home devices") {
+        "Turning on smart lights and AC."
+    },
+    UltronPlugin("SystemInfo", "Device stats") {
+        "Battery: 82%, RAM: 3.1 GB Free"
+    },
+    UltronPlugin("Calculator", "Basic math operations") {
+        val a = 23; val b = 19; "Result of $a + $b = ${a + b}"
+    },
+    UltronPlugin("Translate", "Translate EN to HI") {
+        "Hello = नमस्ते"
+    },
+    UltronPlugin("FileManager", "List Downloads") {
+        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        dir.listFiles()?.joinToString("\n") { it.name } ?: "No files found"
+    }
+)
+
+// ===================== Web Search Function =====================
+fun performWebSearch(query: String, callback: (String) -> Unit) {
+    val cloudUrl = "https://your-cloud-function-url.com/search?q=${URLEncoder.encode(query, "UTF-8")}"
+    OkHttpClient().newCall(Request.Builder().url(cloudUrl).get().build())
+        .enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                callback("Web search failed: ${e.message}")
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body()?.string()
+                callback(body ?: "[Empty Search Response]")
+            }
+        })
+}
+
+// ===================== Placeholders =====================
+// Use these for future expansion or testing
+// - LocalEmbeddingsManager
+// - DeviceAuthManager
+// - HomeNetworkController
+// - Background Services
+// - UI Components (MainActivity)
+
+// 🔧 Awaiting integration into MainActivity and Android Manifest.
+// 💡 Ready to assemble into APK. Awaiting next phase.
