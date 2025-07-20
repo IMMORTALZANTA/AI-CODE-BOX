@@ -1,0 +1,301 @@
+/*
+ * Ultron AI Assistant - Jarvis Overlay + Free API or Local AI Mode + Wake Word + Plugin Engine + Offline LLM + Toggle
+ * Modules: Floating Overlay, Voice/Text Input, Smart Plugin Engine, Logging, Memory, Wake Word, Themes, Toggle AI Source, Device Control
+ */
+
+// ===================== Imports =====================
+import android.Manifest
+import android.app.*
+import android.bluetooth.BluetoothAdapter
+import android.content.*
+import android.content.pm.PackageManager
+import android.graphics.*
+import android.graphics.drawable.GradientDrawable
+import android.media.AudioManager
+import android.net.Uri
+import android.os.*
+import android.provider.Settings
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.util.Log
+import android.view.*
+import android.widget.*
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import okhttp3.*
+import org.json.JSONObject
+import java.io.*
+import java.util.*
+
+val JSON: MediaType = MediaType.get("application/json; charset=utf-8")
+var useLocalAI = true // Toggle between Local LLM and Free AI
+
+// ===================== Free AI API (HuggingFace) =====================
+fun sendPromptToFreeAI(context: Context, userPrompt: String, callback: (String) -> Unit) {
+    val client = OkHttpClient()
+    val jsonBody = JSONObject().apply {
+        put("inputs", userPrompt)
+    }
+    val requestBody = RequestBody.create(JSON, jsonBody.toString())
+    val request = Request.Builder()
+        .url("https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium")
+        .addHeader("Authorization", "Bearer hf_your_api_key_here")
+        .addHeader("Content-Type", "application/json")
+        .post(requestBody)
+        .build()
+
+    client.newCall(request).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            callback("AI offline: ${e.message}")
+        }
+        override fun onResponse(call: Call, response: Response) {
+            val reply = JSONObject(response.body()?.string() ?: "{}").optString("generated_text", "[Empty AI Response]")
+            callback(reply)
+        }
+    })
+}
+
+// ===================== Local LLM (Offline Mode) =====================
+fun sendPromptToLocalLLM(context: Context, userPrompt: String, callback: (String) -> Unit) {
+    val client = OkHttpClient()
+    val jsonBody = JSONObject().apply {
+        put("prompt", userPrompt)
+        put("stream", false)
+    }
+    val requestBody = RequestBody.create(JSON, jsonBody.toString())
+    val request = Request.Builder()
+        .url("http://192.168.1.x:11434/api/generate")
+        .addHeader("Content-Type", "application/json")
+        .post(requestBody)
+        .build()
+
+    client.newCall(request).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            callback("Local LLM unavailable")
+        }
+        override fun onResponse(call: Call, response: Response) {
+            val json = JSONObject(response.body()?.string() ?: "{}")
+            val output = json.optString("response", "[Empty local LLM reply]")
+            callback(output)
+        }
+    })
+}
+
+// ===================== Memory =====================
+fun saveMemory(context: Context, memory: List<String>) {
+    File(context.filesDir, "ultron_memory.txt").writeText(memory.joinToString("\n"))
+}
+fun loadMemory(context: Context): MutableList<String> =
+    File(context.filesDir, "ultron_memory.txt").takeIf { it.exists() }?.readLines()?.toMutableList() ?: mutableListOf()
+
+// ===================== Floating Ultron Overlay =====================
+class FloatingUltronService : Service(), TextToSpeech.OnInitListener {
+    private lateinit var windowManager: WindowManager
+    private lateinit var overlayView: View
+    private lateinit var tts: TextToSpeech
+    private lateinit var speechRecognizer: SpeechRecognizer
+    private val memory = mutableListOf<String>()
+
+    override fun onCreate() {
+        super.onCreate()
+        tts = TextToSpeech(this, this)
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        memory.addAll(loadMemory(this))
+
+        setupWakeWordListener()
+
+        overlayView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 20, 20, 20)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1A1A1A"))
+                cornerRadius = 40f
+                setStroke(3, Color.CYAN)
+            }
+
+            val title = TextView(context).apply {
+                text = "🧠 ULTRON SYSTEM"
+                setTextColor(Color.CYAN)
+                textSize = 20f
+                setPadding(0, 0, 0, 10)
+            }
+
+            val toggleAI = Switch(context).apply {
+                text = "Use Local AI"
+                isChecked = useLocalAI
+                setTextColor(Color.LTGRAY)
+                setOnCheckedChangeListener { _, isChecked ->
+                    useLocalAI = isChecked
+                    tts.speak("Switched to ${if (isChecked) "local" else "online"} AI", TextToSpeech.QUEUE_FLUSH, null, null)
+                }
+            }
+
+            val editText = EditText(context).apply {
+                hint = "What do you seek?"
+                setTextColor(Color.WHITE)
+                setHintTextColor(Color.GRAY)
+                setBackgroundColor(Color.parseColor("#2A2A2A"))
+            }
+
+            val sendBtn = Button(context).apply {
+                text = "ENGAGE"
+                setBackgroundColor(Color.DKGRAY)
+                setTextColor(Color.CYAN)
+            }
+
+            val reply = TextView(context).apply {
+                text = "Ultron awake."
+                setTextColor(Color.LTGRAY)
+                setPadding(0, 10, 0, 0)
+            }
+
+            addView(title)
+            addView(toggleAI)
+            addView(editText)
+            addView(sendBtn)
+            addView(reply)
+
+            sendBtn.setOnClickListener {
+                val msg = editText.text.toString()
+                if (msg.isNotBlank()) {
+                    memory.add("You: $msg")
+                    val respond = if (useLocalAI) ::sendPromptToLocalLLM else ::sendPromptToFreeAI
+                    respond(context, msg) {
+                        runOnUiThread {
+                            memory.add("Ultron: $it")
+                            reply.text = it
+                            tts.speak(it, TextToSpeech.QUEUE_FLUSH, null, null)
+                            saveMemory(context, memory)
+                            handlePlugins(msg.lowercase())
+                        }
+                    }
+                }
+            }
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.TOP or Gravity.START
+        params.x = 100
+        params.y = 200
+
+        windowManager.addView(overlayView, params)
+    }
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts.language = Locale.US
+            tts.speak("Ultron overlay ready", TextToSpeech.QUEUE_FLUSH, null, null)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::overlayView.isInitialized) windowManager.removeView(overlayView)
+        tts.shutdown()
+        speechRecognizer.destroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun setupWakeWordListener() {
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onResults(results: Bundle?) {
+                val spokenText = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                if (spokenText?.contains("hey ultron", ignoreCase = true) == true) {
+                    tts.speak("Yes?", TextToSpeech.QUEUE_FLUSH, null, null)
+                }
+                startListening()
+            }
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) { startListening() }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        startListening()
+    }
+
+    private fun startListening() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+        }
+        speechRecognizer.startListening(intent)
+    }
+
+    private fun handlePlugins(command: String) {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        when {
+            "wifi" in command && "on" in command -> {
+                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                wifiManager.isWifiEnabled = true
+            }
+            "wifi" in command && "off" in command -> {
+                val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                wifiManager.isWifiEnabled = false
+            }
+            "bluetooth" in command && "on" in command -> BluetoothAdapter.getDefaultAdapter()?.enable()
+            "bluetooth" in command && "off" in command -> BluetoothAdapter.getDefaultAdapter()?.disable()
+            "airplane" in command && "on" in command -> startActivity(Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS))
+            "brightness" in command -> Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, 200)
+            "volume up" in command -> audioManager.adjustVolume(AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+            "volume down" in command -> audioManager.adjustVolume(AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+            "rotation lock" in command -> Settings.System.putInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0)
+            "flashlight" in command && "on" in command -> {
+                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                val cameraId = cameraManager.cameraIdList.first()
+                cameraManager.setTorchMode(cameraId, true)
+            }
+            "flashlight" in command && "off" in command -> {
+                val cameraManager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                val cameraId = cameraManager.cameraIdList.first()
+                cameraManager.setTorchMode(cameraId, false)
+            }
+            "open" in command -> {
+                val app = command.substringAfter("open").trim()
+                val launchIntent = packageManager.getLaunchIntentForPackage(app)
+                launchIntent?.let { startActivity(it) }
+            }
+        }
+    }
+}
+
+// ===================== Start Overlay =====================
+class MainActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+        } else {
+            startService(Intent(this, FloatingUltronService::class.java))
+        }
+        finish()
+    }
+}
+
+// ===================== Manifest Requirements =====================
+// <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+// <uses-permission android:name="android.permission.INTERNET"/>
+// <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+// <uses-permission android:name="android.permission.BLUETOOTH"/>
+// <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"/>
+// <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+// <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+// <uses-permission android:name="android.permission.CAMERA"/>
+// <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+// <uses-permission android:name="android.permission.WRITE_SETTINGS"/>
+// <application ... >
+//     <service android:name=".FloatingUltronService" android:exported="false"/>
+// </application>
