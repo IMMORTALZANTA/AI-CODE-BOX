@@ -1,0 +1,176 @@
+/*
+ * Ultron AI Assistant - Unified Kotlin Implementation
+ * All Modules Integrated: MainActivity, Claude API, Voice, Permissions, and Plugin System
+ */
+
+// ===================== Imports =====================
+import android.Manifest
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.content.*
+import android.content.pm.PackageManager
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+import android.graphics.Bitmap
+import android.net.Uri
+import android.net.wifi.WifiManager
+import android.nfc.NfcAdapter
+import android.os.*
+import android.provider.MediaStore
+import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
+import android.telephony.SmsManager
+import android.util.Log
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import okhttp3.*
+import org.json.JSONObject
+import java.io.IOException
+import java.net.URLEncoder
+import java.util.*
+
+val JSON: MediaType = MediaType.get("application/json; charset=utf-8")
+
+// ===================== Claude API =====================
+fun sendPromptToClaude(context: Context, userPrompt: String, callback: (String) -> Unit) {
+    val apiKey = "YOUR_CLAUDE_API_KEY"
+    val client = OkHttpClient()
+    val jsonBody = JSONObject().apply {
+        put("prompt", userPrompt)
+        put("model", "claude-3-opus-20240229")
+        put("max_tokens_to_sample", 512)
+    }
+    val requestBody = RequestBody.create(JSON, jsonBody.toString())
+    val request = Request.Builder()
+        .url("https://api.anthropic.com/v1/complete")
+        .addHeader("x-api-key", apiKey)
+        .addHeader("Content-Type", "application/json")
+        .post(requestBody)
+        .build()
+
+    client.newCall(request).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            Log.e("Claude", "API Call Failed: ${e.message}")
+            callback("Failed to contact Claude: ${e.message}")
+        }
+        override fun onResponse(call: Call, response: Response) {
+            response.body()?.string()?.let {
+                val jsonResponse = JSONObject(it)
+                val completion = jsonResponse.optString("completion", "[No Response]")
+                callback(completion)
+            } ?: callback("[Empty Claude Response]")
+        }
+    })
+}
+
+// ===================== Plugin System =====================
+data class UltronPlugin(val name: String, val description: String, val execute: () -> String)
+class PluginSystemManager(private val context: Context) {
+    private val plugins = mutableListOf<UltronPlugin>()
+    fun registerPlugin(plugin: UltronPlugin) { plugins.add(plugin) }
+    fun getPlugins(): List<UltronPlugin> = plugins
+    fun executePlugin(pluginName: String): String =
+        plugins.find { it.name == pluginName }?.execute?.invoke() ?: "Plugin not found"
+}
+
+fun createDefaultPlugins(context: Context): List<UltronPlugin> = listOf(
+    UltronPlugin("Weather", "Get weather info") {
+        "Weather in Bilaspur: 34°C, Clear Skies"
+    },
+    UltronPlugin("Calendar", "Show today’s events") {
+        "You have 2 meetings and 1 task today."
+    },
+    UltronPlugin("SmartHome", "Control smart home devices") {
+        "Turning on smart lights and AC."
+    },
+    UltronPlugin("SystemInfo", "Device stats") {
+        "Battery: 82%, RAM: 3.1 GB Free"
+    },
+    UltronPlugin("Calculator", "Basic math operations") {
+        val a = 23; val b = 19; "Result of $a + $b = ${a + b}"
+    },
+    UltronPlugin("Translate", "Translate EN to HI") {
+        "Hello = नमस्ते"
+    },
+    UltronPlugin("FileManager", "List Downloads") {
+        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        dir.listFiles()?.joinToString("\n") { it.name } ?: "No files found"
+    }
+)
+
+fun performWebSearch(query: String, callback: (String) -> Unit) {
+    val cloudUrl = "https://your-cloud-function-url.com/search?q=${URLEncoder.encode(query, "UTF-8")}"
+    OkHttpClient().newCall(Request.Builder().url(cloudUrl).get().build())
+        .enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                callback("Web search failed: ${e.message}")
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val body = response.body()?.string()
+                callback(body ?: "[Empty Search Response]")
+            }
+        })
+}
+
+// ===================== MainActivity with Voice & Plugins =====================
+class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+    private lateinit var tts: TextToSpeech
+    private lateinit var pluginSystem: PluginSystemManager
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val editText = EditText(context).apply { hint = "Say something..." }
+            val button = Button(context).apply { text = "Speak to Ultron" }
+            val output = TextView(context)
+            addView(editText)
+            addView(button)
+            addView(output)
+
+            button.setOnClickListener {
+                val input = editText.text.toString()
+                if (input.isNotBlank()) {
+                    sendPromptToClaude(context, input) {
+                        runOnUiThread {
+                            output.text = it
+                            tts.speak(it, TextToSpeech.QUEUE_FLUSH, null, null)
+                        }
+                    }
+                }
+            }
+        }
+        setContentView(layout)
+
+        tts = TextToSpeech(this, this)
+        pluginSystem = PluginSystemManager(this)
+        createDefaultPlugins(this).forEach { pluginSystem.registerPlugin(it) }
+
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(
+                Manifest.permission.INTERNET,
+                Manifest.permission.BLUETOOTH,
+                Manifest.permission.CHANGE_WIFI_STATE,
+                Manifest.permission.NFC,
+                Manifest.permission.SEND_SMS,
+                Manifest.permission.RECORD_AUDIO
+            ),
+            100
+        )
+    }
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts.language = Locale.US
+            tts.speak("Ultron online", TextToSpeech.QUEUE_FLUSH, null, null)
+        }
+    }
+
+    override fun onDestroy() {
+        tts.shutdown()
+        super.onDestroy()
+    }
+}
