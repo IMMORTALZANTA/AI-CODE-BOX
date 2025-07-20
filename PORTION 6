@@ -1,0 +1,593 @@
+// ===================== Ultron Enhanced - Portion 6: Security, Privacy & Advanced Features =====================
+
+// ==================== EMOTIONAL INTELLIGENCE MODULE ====================
+
+class EmotionalIntelligenceModule(private val context: Context) {
+    private val emotionClassifier = EmotionClassifier()
+    private val sentimentAnalyzer = SentimentAnalyzer()
+    private val empathyEngine = EmpathyEngine()
+    private val moodTracker = MoodTracker(context)
+    
+    fun analyzeEmotionalContext(query: String, context: ConversationContext): EmotionalContext {
+        val primaryEmotion = emotionClassifier.classifyEmotion(query)
+        val sentiment = sentimentAnalyzer.analyzeSentiment(query)
+        val emotionalIntensity = calculateEmotionalIntensity(query)
+        val userMoodHistory = moodTracker.getUserMoodHistory(context.userId)
+        
+        return EmotionalContext(
+            dominantEmotion = primaryEmotion,
+            sentiment = sentiment,
+            intensity = emotionalIntensity,
+            contextualFactors = extractContextualFactors(query, context),
+            historicalMoodPattern = userMoodHistory,
+            suggestedResponseTone = determineResponseTone(primaryEmotion, sentiment)
+        )
+    }
+    
+    fun adjustResponseForEmotion(response: ReasoningResult, emotionalContext: EmotionalContext): EmotionallyAwareResponse {
+        val adjustedText = when (emotionalContext.dominantEmotion) {
+            Emotion.HAPPY -> addPositiveReinforcement(response.text)
+            Emotion.SAD -> addComfortingElements(response.text)
+            Emotion.ANGRY -> addCalmingElements(response.text)
+            Emotion.ANXIOUS -> addReassuranceElements(response.text)
+            Emotion.EXCITED -> matchEnthusiasm(response.text)
+            Emotion.CONFUSED -> addClarifyingElements(response.text)
+            Emotion.FRUSTRATED -> addPatienceAndSupport(response.text)
+            else -> response.text
+        }
+        
+        val adjustments = mutableListOf<String>()
+        if (adjustedText != response.text) {
+            adjustments.add("Applied ${emotionalContext.dominantEmotion} sensitivity")
+        }
+        
+        // Apply sentiment-based adjustments
+        val finalText = when (emotionalContext.sentiment) {
+            Sentiment.VERY_NEGATIVE -> addExtraSupport(adjustedText)
+            Sentiment.NEGATIVE -> addEncouragement(adjustedText)
+            Sentiment.POSITIVE -> maintainPositivity(adjustedText)
+            Sentiment.VERY_POSITIVE -> amplifyPositivity(adjustedText)
+            else -> adjustedText
+        }
+        
+        if (finalText != adjustedText) {
+            adjustments.add("Applied sentiment adjustment")
+        }
+        
+        return EmotionallyAwareResponse(
+            text = finalText,
+            confidence = response.confidence * emotionalContext.intensity,
+            emotionalAdjustments = adjustments
+        )
+    }
+    
+    private fun addComfortingElements(text: String): String {
+        val comfortingPhrases = listOf(
+            "I understand this might be difficult. ",
+            "I'm here to help you through this. ",
+            "Take your time, there's no rush. "
+        )
+        return comfortingPhrases.random() + text
+    }
+    
+    private fun addCalmingElements(text: String): String {
+        return "Let me help you with that step by step. " + text.replace("!", ".").replace("MUST", "should")
+    }
+    
+    private fun addReassuranceElements(text: String): String {
+        return "Don't worry, this is completely manageable. " + text + " Everything will be fine."
+    }
+}
+
+// ==================== CONTEXTUAL MEMORY SYSTEM ====================
+
+class ContextualMemorySystem(private val context: Context) {
+    private val dbHelper = UltronDatabaseHelper(context)
+    private val shortTermMemory = mutableMapOf<String, MutableList<MemoryItem>>()
+    private val longTermMemory = mutableMapOf<String, MutableList<MemoryItem>>()
+    private val episodicMemory = mutableListOf<EpisodicMemory>()
+    private val semanticMemory = mutableMapOf<String, SemanticMemoryNode>()
+    
+    fun storeInteraction(query: String, response: String, context: ConversationContext) {
+        val memoryItem = MemoryItem(
+            id = generateMemoryId(),
+            userId = context.userId,
+            query = query,
+            response = response,
+            timestamp = System.currentTimeMillis(),
+            context = context.copy(),
+            importance = calculateImportance(query, response),
+            emotionalWeight = extractEmotionalWeight(query, response),
+            tags = extractTags(query, response)
+        )
+        
+        // Store in short-term memory
+        shortTermMemory.getOrPut(context.userId) { mutableListOf() }.add(memoryItem)
+        
+        // Create episodic memory
+        val episode = EpisodicMemory(
+            id = generateEpisodeId(),
+            userId = context.userId,
+            interactions = listOf(memoryItem),
+            startTime = System.currentTimeMillis(),
+            endTime = System.currentTimeMillis(),
+            context = context,
+            summary = generateEpisodeSummary(listOf(memoryItem)),
+            emotionalArc = trackEmotionalArc(listOf(memoryItem))
+        )
+        episodicMemory.add(episode)
+        
+        // Update semantic memory
+        updateSemanticMemory(query, response, context)
+        
+        // Consolidate to long-term memory if needed
+        consolidateMemory(context.userId)
+    }
+    
+    fun retrieveRelevantContext(query: String, context: ConversationContext): List<ContextualInfo> {
+        val relevantMemories = mutableListOf<ContextualInfo>()
+        
+        // Search short-term memory
+        shortTermMemory[context.userId]?.let { memories ->
+            memories.filter { memory ->
+                calculateRelevanceScore(query, memory) > 0.6f
+            }.take(5).forEach { memory ->
+                relevantMemories.add(
+                    ContextualInfo(
+                        type = ContextType.RECENT_INTERACTION,
+                        content = memory.query + " -> " + memory.response.take(100),
+                        relevanceScore = calculateRelevanceScore(query, memory),
+                        timestamp = memory.timestamp
+                    )
+                )
+            }
+        }
+        
+        // Search long-term memory
+        longTermMemory[context.userId]?.let { memories ->
+            memories.filter { memory ->
+                calculateRelevanceScore(query, memory) > 0.7f
+            }.take(3).forEach { memory ->
+                relevantMemories.add(
+                    ContextualInfo(
+                        type = ContextType.HISTORICAL_PATTERN,
+                        content = memory.query + " -> " + memory.response.take(100),
+                        relevanceScore = calculateRelevanceScore(query, memory),
+                        timestamp = memory.timestamp
+                    )
+                )
+            }
+        }
+        
+        // Search episodic memory
+        episodicMemory.filter { episode ->
+            episode.userId == context.userId && calculateEpisodeRelevance(query, episode) > 0.5f
+        }.take(2).forEach { episode ->
+            relevantMemories.add(
+                ContextualInfo(
+                    type = ContextType.EPISODIC,
+                    content = episode.summary,
+                    relevanceScore = calculateEpisodeRelevance(query, episode),
+                    timestamp = episode.startTime
+                )
+            )
+        }
+        
+        return relevantMemories.sortedByDescending { it.relevanceScore }
+    }
+    
+    private fun consolidateMemory(userId: String) {
+        shortTermMemory[userId]?.let { memories ->
+            if (memories.size > 50) { // Consolidation threshold
+                val importantMemories = memories.filter { it.importance > 0.7f }
+                val oldMemories = memories.filter { 
+                    System.currentTimeMillis() - it.timestamp > 24 * 60 * 60 * 1000 // 24 hours
+                }
+                
+                // Move important old memories to long-term
+                longTermMemory.getOrPut(userId) { mutableListOf() }.addAll(
+                    oldMemories.filter { it.importance > 0.6f }
+                )
+                
+                // Keep only recent or important memories in short-term
+                shortTermMemory[userId] = memories.filter { memory ->
+                    memory.importance > 0.7f || 
+                    System.currentTimeMillis() - memory.timestamp < 6 * 60 * 60 * 1000 // 6 hours
+                }.toMutableList()
+                
+                // Persist to database
+                persistMemoryConsolidation(userId)
+            }
+        }
+    }
+    
+    private fun updateSemanticMemory(query: String, response: String, context: ConversationContext) {
+        val concepts = extractConcepts(query + " " + response)
+        
+        concepts.forEach { concept ->
+            val existing = semanticMemory[concept]
+            if (existing != null) {
+                existing.strength += 0.1f
+                existing.lastAccessed = System.currentTimeMillis()
+                existing.accessCount++
+            } else {
+                semanticMemory[concept] = SemanticMemoryNode(
+                    concept = concept,
+                    strength = 0.5f,
+                    associations = mutableListOf(),
+                    createdAt = System.currentTimeMillis(),
+                    lastAccessed = System.currentTimeMillis(),
+                    accessCount = 1
+                )
+            }
+        }
+        
+        // Create associations between concepts
+        for (i in concepts.indices) {
+            for (j in i + 1 until concepts.size) {
+                semanticMemory[concepts[i]]?.associations?.add(concepts[j])
+                semanticMemory[concepts[j]]?.associations?.add(concepts[i])
+            }
+        }
+    }
+}
+
+// ==================== ADVANCED SECURITY SYSTEM ====================
+
+class AdvancedSecuritySystem(private val context: Context) {
+    private val encryptionManager = EncryptionManager(context)
+    private val biometricManager = BiometricManager(context)
+    private val threatDetector = ThreatDetector()
+    private val privacyProtector = PrivacyProtector(context)
+    private val securityLogger = SecurityLogger(context)
+    
+    fun authenticateUser(authRequest: AuthenticationRequest): AuthenticationResult {
+        val startTime = System.currentTimeMillis()
+        
+        try {
+            // Multi-factor authentication
+            val primaryAuth = performPrimaryAuthentication(authRequest)
+            if (!primaryAuth.success) {
+                return AuthenticationResult(false, "Primary authentication failed", null)
+            }
+            
+            val secondaryAuth = performSecondaryAuthentication(authRequest)
+            if (!secondaryAuth.success) {
+                return AuthenticationResult(false, "Secondary authentication failed", null)
+            }
+            
+            // Biometric verification if available
+            val biometricAuth = if (authRequest.includeBiometric && biometricManager.isAvailable()) {
+                performBiometricAuthentication(authRequest)
+            } else {
+                AuthenticationStep(true, "Biometric skipped")
+            }
+            
+            if (authRequest.includeBiometric && !biometricAuth.success) {
+                return AuthenticationResult(false, "Biometric authentication failed", null)
+            }
+            
+            // Threat assessment
+            val threatAssessment = threatDetector.assessThreat(authRequest)
+            if (threatAssessment.riskLevel > ThreatLevel.MEDIUM) {
+                securityLogger.logThreat(threatAssessment)
+                return AuthenticationResult(false, "Security threat detected", null)
+            }
+            
+            // Generate secure session
+            val sessionToken = generateSecureSession(authRequest.userId)
+            
+            val result = AuthenticationResult(
+                success = true,
+                message = "Authentication successful",
+                sessionToken = sessionToken,
+                authenticationTime = System.currentTimeMillis() - startTime,
+                securityLevel = determineSecurityLevel(authRequest)
+            )
+            
+            securityLogger.logSuccessfulAuth(authRequest.userId, result)
+            return result
+            
+        } catch (e: SecurityException) {
+            securityLogger.logSecurityException(e, authRequest)
+            return AuthenticationResult(false, "Security error occurred", null)
+        }
+    }
+    
+    fun encryptSensitiveData(data: String, userId: String): EncryptedData {
+        val userKey = encryptionManager.getUserKey(userId)
+        val encrypted = encryptionManager.encrypt(data, userKey)
+        
+        return EncryptedData(
+            encryptedContent = encrypted.encryptedText,
+            keyFingerprint = encrypted.keyFingerprint,
+            encryptionAlgorithm = "AES-256-GCM",
+            timestamp = System.currentTimeMillis()
+        )
+    }
+    
+    fun decryptSensitiveData(encryptedData: EncryptedData, userId: String): String {
+        val userKey = encryptionManager.getUserKey(userId)
+        return encryptionManager.decrypt(encryptedData, userKey)
+    }
+    
+    fun scanForThreats(input: String, context: SecurityContext): ThreatAssessment {
+        return threatDetector.performComprehensiveScan(input, context)
+    }
+    
+    fun protectUserPrivacy(data: PersonalData): ProtectedData {
+        return privacyProtector.applyPrivacyProtections(data)
+    }
+}
+
+// ==================== PRIVACY PROTECTION SYSTEM ====================
+
+class PrivacyProtector(private val context: Context) {
+    private val dataClassifier = DataClassifier()
+    private val anonymizer = DataAnonymizer()
+    private val consentManager = ConsentManager(context)
+    
+    fun applyPrivacyProtections(data: PersonalData): ProtectedData {
+        val classification = dataClassifier.classifyData(data)
+        val consentLevel = consentManager.getUserConsentLevel(data.userId, classification.dataType)
+        
+        return when (classification.sensitivityLevel) {
+            SensitivityLevel.PUBLIC -> ProtectedData(data.content, ProtectionLevel.NONE)
+            SensitivityLevel.INTERNAL -> applyBasicProtection(data)
+            SensitivityLevel.CONFIDENTIAL -> applyAdvancedProtection(data, consentLevel)
+            SensitivityLevel.RESTRICTED -> applyMaximumProtection(data, consentLevel)
+        }
+    }
+    
+    private fun applyBasicProtection(data: PersonalData): ProtectedData {
+        val protectedContent = anonymizer.anonymizeBasicPII(data.content)
+        return ProtectedData(protectedContent, ProtectionLevel.BASIC)
+    }
+    
+    private fun applyAdvancedProtection(data: PersonalData, consentLevel: ConsentLevel): ProtectedData {
+        if (consentLevel < ConsentLevel.EXPLICIT) {
+            throw PrivacyViolationException("Insufficient consent for confidential data")
+        }
+        
+        val protectedContent = anonymizer.anonymizeAdvancedPII(data.content)
+        return ProtectedData(protectedContent, ProtectionLevel.ADVANCED)
+    }
+    
+    private fun applyMaximumProtection(data: PersonalData, consentLevel: ConsentLevel): ProtectedData {
+        if (consentLevel < ConsentLevel.GRANULAR) {
+            throw PrivacyViolationException("Insufficient consent for restricted data")
+        }
+        
+        val protectedContent = anonymizer.fullyAnonymize(data.content)
+        return ProtectedData(protectedContent, ProtectionLevel.MAXIMUM)
+    }
+}
+
+// ==================== REASONING CHAIN PROCESSOR ====================
+
+class ReasoningChainProcessor {
+    fun processComplexReasoning(query: String, intent: Intent, knowledge: List<KnowledgeNode>, context: List<ContextualInfo>): ReasoningResult {
+        val reasoningSteps = mutableListOf<ReasoningStep>()
+        val sources = mutableSetOf<String>()
+        
+        // Step 1: Problem decomposition
+        val subProblems = decomposeProblem(query)
+        reasoningSteps.add(ReasoningStep("Problem Decomposition", "Broke down query into ${subProblems.size} sub-problems"))
+        
+        // Step 2: Knowledge integration
+        val integratedKnowledge = integrateKnowledge(knowledge, context)
+        reasoningSteps.add(ReasoningStep("Knowledge Integration", "Integrated ${knowledge.size} knowledge nodes with context"))
+        sources.addAll(knowledge.map { it.concept })
+        
+        // Step 3: Logical reasoning
+        val logicalConclusions = mutableListOf<String>()
+        subProblems.forEach { subProblem ->
+            val relevantKnowledge = integratedKnowledge.filter { it.isRelevantTo(subProblem) }
+            val conclusion = applyLogicalReasoning(subProblem, relevantKnowledge)
+            logicalConclusions.add(conclusion)
+            reasoningSteps.add(ReasoningStep("Logical Analysis", "Analyzed: $subProblem"))
+        }
+        
+        // Step 4: Synthesis
+        val finalAnswer = synthesizeConclusions(logicalConclusions, query)
+        reasoningSteps.add(ReasoningStep("Synthesis", "Combined conclusions into final answer"))
+        
+        // Step 5: Confidence calculation
+        val confidence = calculateReasoningConfidence(reasoningSteps, integratedKnowledge)
+        
+        return ReasoningResult(
+            text = finalAnswer,
+            confidence = confidence,
+            reasoning = reasoningSteps.joinToString("\n") { "${it.step}: ${it.description}" },
+            sources = sources.toList(),
+            reasoningSteps = reasoningSteps
+        )
+    }
+    
+    private fun decomposeProblem(query: String): List<SubProblem> {
+        val subProblems = mutableListOf<SubProblem>()
+        
+        // Look for conjunctions and question patterns
+        val conjunctions = listOf("and", "also", "plus", "furthermore", "additionally")
+        val questions = listOf("what", "how", "why", "when", "where", "who")
+        
+        var currentProblem = query.lowercase()
+        
+        // Split by conjunctions
+        conjunctions.forEach { conjunction ->
+            if (currentProblem.contains(" $conjunction ")) {
+                val parts = currentProblem.split(" $conjunction ")
+                parts.forEach { part ->
+                    if (part.trim().isNotEmpty()) {
+                        subProblems.add(SubProblem(part.trim(), ProblemType.FACTUAL))
+                    }
+                }
+                return subProblems // Found splits, return early
+            }
+        }
+        
+        // If no conjunctions found, treat as single problem
+        if (subProblems.isEmpty()) {
+            val problemType = when {
+                questions.any { currentProblem.startsWith(it) } -> ProblemType.INTERROGATIVE
+                currentProblem.contains("calculate") || currentProblem.contains("compute") -> ProblemType.COMPUTATIONAL
+                currentProblem.contains("compare") || currentProblem.contains("analyze") -> ProblemType.ANALYTICAL
+                else -> ProblemType.FACTUAL
+            }
+            subProblems.add(SubProblem(currentProblem, problemType))
+        }
+        
+        return subProblems
+    }
+    
+    private fun integrateKnowledge(knowledge: List<KnowledgeNode>, context: List<ContextualInfo>): List<IntegratedKnowledge> {
+        return knowledge.map { node ->
+            val relevantContext = context.filter { it.relevanceScore > 0.5f && it.content.contains(node.concept, true) }
+            IntegratedKnowledge(
+                node = node,
+                contextualInfo = relevantContext,
+                combinedConfidence = (node.confidence + relevantContext.sumOf { it.relevanceScore.toDouble() }).toFloat() / (relevantContext.size + 1)
+            )
+        }
+    }
+    
+    private fun applyLogicalReasoning(subProblem: SubProblem, knowledge: List<IntegratedKnowledge>): String {
+        return when (subProblem.type) {
+            ProblemType.FACTUAL -> resolveFact(subProblem.description, knowledge)
+            ProblemType.COMPUTATIONAL -> performComputation(subProblem.description, knowledge)
+            ProblemType.ANALYTICAL -> performAnalysis(subProblem.description, knowledge)
+            ProblemType.INTERROGATIVE -> answerQuestion(subProblem.description, knowledge)
+        }
+    }
+    
+    private fun resolveFact(query: String, knowledge: List<IntegratedKnowledge>): String {
+        val bestMatch = knowledge.maxByOrNull { it.combinedConfidence }
+        return bestMatch?.let { match ->
+            val facts = match.node.facts.filter { it.contains(query.split(" ").first(), true) }
+            if (facts.isNotEmpty()) facts.first() else "Based on available information: ${match.node.concept}"
+        } ?: "I don't have specific information about that."
+    }
+    
+    private fun synthesizeConclusions(conclusions: List<String>, originalQuery: String): String {
+        return if (conclusions.size == 1) {
+            conclusions.first()
+        } else {
+            val synthesis = StringBuilder()
+            synthesis.append("Based on my analysis of your query, here's what I found:\n\n")
+            conclusions.forEachIndexed { index, conclusion ->
+                synthesis.append("${index + 1}. $conclusion\n")
+            }
+            synthesis.append("\nIn summary: ${generateSummary(conclusions, originalQuery)}")
+            synthesis.toString()
+        }
+    }
+}
+
+// ==================== DATA CLASSES AND ENUMS ====================
+
+data class EmotionalContext(
+    val dominantEmotion: Emotion,
+    val sentiment: Sentiment,
+    val intensity: Float,
+    val contextualFactors: List<String>,
+    val historicalMoodPattern: MoodPattern,
+    val suggestedResponseTone: ResponseTone
+)
+
+enum class Emotion {
+    HAPPY, SAD, ANGRY, ANXIOUS, EXCITED, CONFUSED, FRUSTRATED, NEUTRAL, CURIOUS, DISAPPOINTED
+}
+
+enum class Sentiment {
+    VERY_NEGATIVE, NEGATIVE, NEUTRAL, POSITIVE, VERY_POSITIVE
+}
+
+enum class ResponseTone {
+    EMPATHETIC, ENCOURAGING, CALMING, ENTHUSIASTIC, INFORMATIVE, SUPPORTIVE
+}
+
+data class MemoryItem(
+    val id: String,
+    val userId: String,
+    val query: String,
+    val response: String,
+    val timestamp: Long,
+    val context: ConversationContext,
+    val importance: Float,
+    val emotionalWeight: Float,
+    val tags: List<String>
+)
+
+data class EpisodicMemory(
+    val id: String,
+    val userId: String,
+    val interactions: List<MemoryItem>,
+    val startTime: Long,
+    val endTime: Long,
+    val context: ConversationContext,
+    val summary: String,
+    val emotionalArc: EmotionalArc
+)
+
+data class SemanticMemoryNode(
+    val concept: String,
+    var strength: Float,
+    val associations: MutableList<String>,
+    val createdAt: Long,
+    var lastAccessed: Long,
+    var accessCount: Int
+)
+
+data class AuthenticationRequest(
+    val userId: String,
+    val primaryCredential: String,
+    val secondaryCredential: String?,
+    val includeBiometric: Boolean,
+    val deviceId: String,
+    val ipAddress: String
+)
+
+data class AuthenticationResult(
+    val success: Boolean,
+    val message: String,
+    val sessionToken: String?,
+    val authenticationTime: Long = 0,
+    val securityLevel: SecurityLevel = SecurityLevel.STANDARD
+)
+
+data class ThreatAssessment(
+    val riskLevel: ThreatLevel,
+    val threats: List<IdentifiedThreat>,
+    val recommendations: List<String>,
+    val confidence: Float
+)
+
+enum class ThreatLevel {
+    LOW, MEDIUM, HIGH, CRITICAL
+}
+
+enum class SecurityLevel {
+    BASIC, STANDARD, ENHANCED, MAXIMUM
+}
+
+data class SubProblem(
+    val description: String,
+    val type: ProblemType
+)
+
+enum class ProblemType {
+    FACTUAL, COMPUTATIONAL, ANALYTICAL, INTERROGATIVE
+}
+
+data class ReasoningStep(
+    val step: String,
+    val description: String
+)
+
+data class ReasoningResult(
+    val text: String,
+    val confidence: Float,
+    val reasoning: String,
+    val sources: List<String>,
+    val reasoningSteps: List<ReasoningStep>
+)
