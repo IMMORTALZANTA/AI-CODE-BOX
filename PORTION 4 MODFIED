@@ -1,0 +1,402 @@
+// ===================== Ultron Enhanced - Portion 4: Plugin System & Web Search =====================
+
+// ==================== PLUGIN SYSTEM MANAGER ====================
+
+class PluginSystemManager(private val context: Context) {
+    private val dbHelper = UltronDatabaseHelper(context)
+    private val loadedPlugins = mutableMapOf<String, UltronPluginBase>()
+    private val pluginRegistry = mutableListOf<UltronPlugin>()
+    
+    init {
+        initializeBuiltInPlugins()
+        loadInstalledPlugins()
+    }
+    
+    private fun initializeBuiltInPlugins() {
+        // Weather Plugin
+        val weatherPlugin = UltronPlugin(
+            id = "weather_plugin",
+            name = "Weather Assistant",
+            description = "Get weather information and forecasts",
+            version = "1.0.0",
+            author = "Ultron Team",
+            iconRes = R.drawable.ic_weather,
+            isEnabled = true,
+            permissions = listOf("INTERNET", "ACCESS_LOCATION"),
+            commands = listOf("weather", "forecast", "temperature"),
+            pluginClass = "WeatherPlugin"
+        )
+        
+        // Smart Home Plugin
+        val smartHomePlugin = UltronPlugin(
+            id = "smarthome_plugin",
+            name = "Smart Home Control",
+            description = "Control smart home devices and lights",
+            version = "1.0.0",
+            author = "Ultron Team",
+            iconRes = R.drawable.ic_home,
+            isEnabled = true,
+            permissions = listOf("INTERNET", "ACCESS_NETWORK_STATE"),
+            commands = listOf("lights", "thermostat", "security", "camera"),
+            pluginClass = "SmartHomePlugin"
+        )
+        
+        // File Manager Plugin
+        val fileManagerPlugin = UltronPlugin(
+            id = "filemanager_plugin",
+            name = "File Manager",
+            description = "Access and manage device files",
+            version = "1.0.0",
+            author = "Ultron Team",
+            iconRes = R.drawable.ic_folder,
+            isEnabled = true,
+            permissions = listOf("READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE"),
+            commands = listOf("files", "open", "save", "delete", "copy"),
+            pluginClass = "FileManagerPlugin"
+        )
+        
+        // Calendar Plugin
+        val calendarPlugin = UltronPlugin(
+            id = "calendar_plugin",
+            name = "Calendar Assistant",
+            description = "Manage calendar events and reminders",
+            version = "1.0.0",
+            author = "Ultron Team",
+            iconRes = R.drawable.ic_calendar,
+            isEnabled = true,
+            permissions = listOf("READ_CALENDAR", "WRITE_CALENDAR"),
+            commands = listOf("schedule", "event", "reminder", "meeting"),
+            pluginClass = "CalendarPlugin"
+        )
+        
+        pluginRegistry.addAll(listOf(weatherPlugin, smartHomePlugin, fileManagerPlugin, calendarPlugin))
+        savePluginsToDatabase()
+    }
+    
+    private fun loadInstalledPlugins() {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query("plugins", null, null, null, null, null, null)
+        
+        cursor.use {
+            while (it.moveToNext()) {
+                val plugin = UltronPlugin(
+                    id = it.getString(it.getColumnIndexOrThrow("id")),
+                    name = it.getString(it.getColumnIndexOrThrow("name")),
+                    description = it.getString(it.getColumnIndexOrThrow("description")),
+                    version = it.getString(it.getColumnIndexOrThrow("version")),
+                    author = it.getString(it.getColumnIndexOrThrow("author")),
+                    iconRes = it.getInt(it.getColumnIndexOrThrow("icon_res")),
+                    isEnabled = it.getInt(it.getColumnIndexOrThrow("is_enabled")) == 1,
+                    permissions = it.getString(it.getColumnIndexOrThrow("permissions")).split(","),
+                    commands = it.getString(it.getColumnIndexOrThrow("commands")).split(","),
+                    pluginClass = it.getString(it.getColumnIndexOrThrow("plugin_class"))
+                )
+                
+                if (pluginRegistry.none { p -> p.id == plugin.id }) {
+                    pluginRegistry.add(plugin)
+                }
+            }
+        }
+    }
+    
+    private fun savePluginsToDatabase() {
+        val db = dbHelper.writableDatabase
+        pluginRegistry.forEach { plugin ->
+            val values = ContentValues().apply {
+                put("id", plugin.id)
+                put("name", plugin.name)
+                put("description", plugin.description)
+                put("version", plugin.version)
+                put("author", plugin.author)
+                put("icon_res", plugin.iconRes)
+                put("is_enabled", if (plugin.isEnabled) 1 else 0)
+                put("permissions", plugin.permissions.joinToString(","))
+                put("commands", plugin.commands.joinToString(","))
+                put("plugin_class", plugin.pluginClass)
+            }
+            db.insertWithOnConflict("plugins", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+    
+    fun executePlugin(plugin: UltronPlugin, command: String, parameters: Map<String, Any> = emptyMap()): PluginResult {
+        if (!plugin.isEnabled) {
+            return PluginResult.error("Plugin is disabled")
+        }
+        
+        val pluginInstance = loadedPlugins[plugin.id] ?: loadPlugin(plugin)
+        return pluginInstance?.execute(command, parameters) ?: PluginResult.error("Plugin not found")
+    }
+    
+    private fun loadPlugin(plugin: UltronPlugin): UltronPluginBase? {
+        return try {
+            val pluginInstance = when (plugin.pluginClass) {
+                "WeatherPlugin" -> WeatherPlugin(context)
+                "SmartHomePlugin" -> SmartHomePlugin(context)
+                "FileManagerPlugin" -> FileManagerPlugin(context)
+                "CalendarPlugin" -> CalendarPlugin(context)
+                else -> null
+            }
+            
+            if (pluginInstance != null) {
+                loadedPlugins[plugin.id] = pluginInstance
+            }
+            pluginInstance
+        } catch (e: Exception) {
+            Log.e("PluginSystem", "Failed to load plugin ${plugin.id}: ${e.message}")
+            null
+        }
+    }
+    
+    fun getAvailablePlugins(): List<UltronPlugin> = pluginRegistry.toList()
+    
+    fun getEnabledPlugins(): List<UltronPlugin> = pluginRegistry.filter { it.isEnabled }
+    
+    fun togglePlugin(pluginId: String, enabled: Boolean) {
+        val pluginIndex = pluginRegistry.indexOfFirst { it.id == pluginId }
+        if (pluginIndex >= 0) {
+            val plugin = pluginRegistry[pluginIndex]
+            pluginRegistry[pluginIndex] = plugin.copy(isEnabled = enabled)
+            savePluginsToDatabase()
+            
+            if (!enabled) {
+                loadedPlugins.remove(pluginId)
+            }
+        }
+    }
+}
+
+// ==================== PLUGIN BASE CLASS ====================
+
+abstract class UltronPluginBase(protected val context: Context) {
+    abstract fun execute(command: String, parameters: Map<String, Any>): PluginResult
+    abstract fun getCapabilities(): List<String>
+    abstract fun isCommandSupported(command: String): Boolean
+}
+
+data class PluginResult(
+    val success: Boolean,
+    val message: String,
+    val data: Map<String, Any> = emptyMap(),
+    val actionsTaken: List<String> = emptyList()
+) {
+    companion object {
+        fun success(message: String, data: Map<String, Any> = emptyMap(), actions: List<String> = emptyList()) =
+            PluginResult(true, message, data, actions)
+            
+        fun error(message: String) = PluginResult(false, message)
+    }
+}
+
+// ==================== BUILT-IN PLUGIN IMPLEMENTATIONS ====================
+
+class WeatherPlugin(context: Context) : UltronPluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command.toLowerCase()) {
+            "weather", "forecast" -> {
+                val location = parameters["location"] as? String ?: "current location"
+                val weatherData = getWeatherData(location)
+                PluginResult.success("Weather for $location: $weatherData", mapOf("weather" to weatherData))
+            }
+            "temperature" -> {
+                val temp = getCurrentTemperature()
+                PluginResult.success("Current temperature: ${temp}°C", mapOf("temperature" to temp))
+            }
+            else -> PluginResult.error("Unknown weather command: $command")
+        }
+    }
+    
+    private fun getWeatherData(location: String): String {
+        // Mock weather data - integrate with actual weather API
+        return "Sunny, 24°C, Light breeze"
+    }
+    
+    private fun getCurrentTemperature(): Int {
+        return (20..30).random() // Mock temperature
+    }
+    
+    override fun getCapabilities() = listOf("weather_info", "forecast", "temperature")
+    override fun isCommandSupported(command: String) = listOf("weather", "forecast", "temperature").contains(command.toLowerCase())
+}
+
+class SmartHomePlugin(context: Context) : UltronPluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command.toLowerCase()) {
+            "lights" -> {
+                val action = parameters["action"] as? String ?: "toggle"
+                val room = parameters["room"] as? String ?: "living room"
+                controlLights(room, action)
+            }
+            "thermostat" -> {
+                val temperature = parameters["temperature"] as? Int ?: 22
+                setThermostat(temperature)
+            }
+            "security" -> {
+                val mode = parameters["mode"] as? String ?: "arm"
+                controlSecurity(mode)
+            }
+            else -> PluginResult.error("Unknown smart home command: $command")
+        }
+    }
+    
+    private fun controlLights(room: String, action: String): PluginResult {
+        // Mock smart home control
+        return PluginResult.success("$room lights $action", actionsTaken = listOf("light_control"))
+    }
+    
+    private fun setThermostat(temperature: Int): PluginResult {
+        return PluginResult.success("Thermostat set to ${temperature}°C", actionsTaken = listOf("thermostat_control"))
+    }
+    
+    private fun controlSecurity(mode: String): PluginResult {
+        return PluginResult.success("Security system $mode", actionsTaken = listOf("security_control"))
+    }
+    
+    override fun getCapabilities() = listOf("lighting_control", "thermostat_control", "security_system")
+    override fun isCommandSupported(command: String) = listOf("lights", "thermostat", "security", "camera").contains(command.toLowerCase())
+}
+
+class FileManagerPlugin(context: Context) : UltronPluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command.toLowerCase()) {
+            "files" -> {
+                val directory = parameters["directory"] as? String ?: Environment.getExternalStorageDirectory().absolutePath
+                val files = listFiles(directory)
+                PluginResult.success("Found ${files.size} files", mapOf("files" to files))
+            }
+            "open" -> {
+                val filePath = parameters["path"] as? String ?: return PluginResult.error("File path required")
+                openFile(filePath)
+            }
+            "save" -> {
+                val fileName = parameters["name"] as? String ?: return PluginResult.error("File name required")
+                val content = parameters["content"] as? String ?: ""
+                saveFile(fileName, content)
+            }
+            else -> PluginResult.error("Unknown file command: $command")
+        }
+    }
+    
+    private fun listFiles(directory: String): List<String> {
+        return try {
+            File(directory).listFiles()?.map { it.name } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+    
+    private fun openFile(filePath: String): PluginResult {
+        return try {
+            val content = File(filePath).readText()
+            PluginResult.success("File opened", mapOf("content" to content), listOf("file_access"))
+        } catch (e: Exception) {
+            PluginResult.error("Failed to open file: ${e.message}")
+        }
+    }
+    
+    private fun saveFile(fileName: String, content: String): PluginResult {
+        return try {
+            val file = File(Environment.getExternalStorageDirectory(), fileName)
+            file.writeText(content)
+            PluginResult.success("File saved: $fileName", actionsTaken = listOf("file_save"))
+        } catch (e: Exception) {
+            PluginResult.error("Failed to save file: ${e.message}")
+        }
+    }
+    
+    override fun getCapabilities() = listOf("file_read", "file_write", "directory_list")
+    override fun isCommandSupported(command: String) = listOf("files", "open", "save", "delete", "copy").contains(command.toLowerCase())
+}
+
+class CalendarPlugin(context: Context) : UltronPluginBase(context) {
+    override fun execute(command: String, parameters: Map<String, Any>): PluginResult {
+        return when (command.toLowerCase()) {
+            "schedule", "event" -> {
+                val title = parameters["title"] as? String ?: "Untitled Event"
+                val date = parameters["date"] as? String ?: "Today"
+                val time = parameters["time"] as? String ?: "Now"
+                createEvent(title, date, time)
+            }
+            "reminder" -> {
+                val message = parameters["message"] as? String ?: "Reminder"
+                val time = parameters["time"] as? String ?: "1 hour"
+                createReminder(message, time)
+            }
+            else -> PluginResult.error("Unknown calendar command: $command")
+        }
+    }
+    
+    private fun createEvent(title: String, date: String, time: String): PluginResult {
+        // Mock calendar event creation
+        return PluginResult.success("Event '$title' scheduled for $date at $time", 
+            actionsTaken = listOf("calendar_event_created"))
+    }
+    
+    private fun createReminder(message: String, time: String): PluginResult {
+        return PluginResult.success("Reminder '$message' set for $time", 
+            actionsTaken = listOf("reminder_created"))
+    }
+    
+    override fun getCapabilities() = listOf("event_creation", "reminder_setting", "calendar_access")
+    override fun isCommandSupported(command: String) = listOf("schedule", "event", "reminder", "meeting").contains(command.toLowerCase())
+}
+
+// ==================== WEB SEARCH INTEGRATION ====================
+
+class WebSearchManager(private val context: Context) {
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .build()
+    
+    private val CLOUD_FUNCTION_URL = "https://your-cloud-function-url.com/search"
+    
+    fun searchWeb(query: String, callback: (WebSearchResult?) -> Unit) {
+        val requestBody = JSONObject().apply {
+            put("query", query)
+            put("max_results", 5)
+        }
+        
+        val request = Request.Builder()
+            .url(CLOUD_FUNCTION_URL)
+            .post(RequestBody.create(MediaType.parse("application/json"), requestBody.toString()))
+            .addHeader("Content-Type", "application/json")
+            .build()
+        
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                Log.e("WebSearch", "Search failed: ${e.message}")
+                callback(null)
+            }
+            
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    val responseBody = response.body()?.string()
+                    val json = JSONObject(responseBody)
+                    val resultsArray = json.getJSONArray("results")
+                    
+                    val searchResults = mutableListOf<SearchResult>()
+                    for (i in 0 until resultsArray.length()) {
+                        val result = resultsArray.getJSONObject(i)
+                        searchResults.add(SearchResult(
+                            title = result.getString("title"),
+                            url = result.getString("url"),
+                            snippet = result.getString("snippet"),
+                            source = result.getString("source")
+                        ))
+                    }
+                    
+                    val webSearchResult = WebSearchResult(
+                        query = query,
+                        results = searchResults,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    
+                    callback(webSearchResult)
+                } catch (e: Exception) {
+                    Log.e("WebSearch", "Failed to parse search results: ${e.message}")
+                    callback(null)
+                }
+            }
+        })
+    }
+}
