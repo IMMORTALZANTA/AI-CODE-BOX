@@ -1,0 +1,601 @@
+// ===================== Ultron Enhanced - Portion 5: Advanced AI & Learning Systems =====================
+
+// ==================== COMPLETION OF PLUGIN SYSTEM ====================
+
+    fun togglePlugin(pluginId: String, enabled: Boolean) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put("is_enabled", if (enabled) 1 else 0)
+        }
+        
+        db.update(UltronDatabaseHelper.TABLE_PLUGINS, values, "id = ?", arrayOf(pluginId))
+        
+        // Update local list
+        installedPlugins.find { it.id == pluginId }?.let { plugin ->
+            val updatedPlugin = plugin.copy(isEnabled = enabled)
+            val index = installedPlugins.indexOf(plugin)
+            installedPlugins[index] = updatedPlugin
+        }
+    }
+    
+    fun uninstallPlugin(pluginId: String) {
+        val db = dbHelper.writableDatabase
+        db.delete(UltronDatabaseHelper.TABLE_PLUGINS, "id = ?", arrayOf(pluginId))
+        installedPlugins.removeAll { it.id == pluginId }
+        pluginInstances.remove(pluginId)
+    }
+}
+
+// ==================== ADVANCED AI REASONING ENGINE ====================
+
+class AdvancedAIEngine(private val context: Context) {
+    private val neuralNetwork = NeuralNetworkProcessor(context)
+    private val knowledgeGraph = KnowledgeGraphManager(context)
+    private val contextualMemory = ContextualMemorySystem(context)
+    private val reasoningChain = ReasoningChainProcessor()
+    private val emotionalIntelligence = EmotionalIntelligenceModule(context)
+    
+    fun processAdvancedQuery(query: String, context: ConversationContext): AIResponse {
+        val startTime = System.currentTimeMillis()
+        
+        // Step 1: Parse and understand the query
+        val queryAnalysis = analyzeQueryComplexity(query)
+        val entities = extractEntities(query)
+        val intent = classifyIntent(query, context)
+        
+        // Step 2: Retrieve relevant knowledge
+        val relevantKnowledge = knowledgeGraph.findRelevantKnowledge(entities, intent)
+        val contextualInfo = contextualMemory.retrieveRelevantContext(query, context)
+        
+        // Step 3: Apply reasoning
+        val reasoningResult = when (queryAnalysis.complexity) {
+            QueryComplexity.SIMPLE -> processSimpleQuery(query, intent)
+            QueryComplexity.MODERATE -> processModerateQuery(query, intent, relevantKnowledge)
+            QueryComplexity.COMPLEX -> processComplexQuery(query, intent, relevantKnowledge, contextualInfo)
+            QueryComplexity.MULTI_STEP -> processMultiStepQuery(query, intent, relevantKnowledge, contextualInfo)
+        }
+        
+        // Step 4: Apply emotional intelligence
+        val emotionalContext = emotionalIntelligence.analyzeEmotionalContext(query, context)
+        val emotionallyAwareResponse = emotionalIntelligence.adjustResponseForEmotion(reasoningResult, emotionalContext)
+        
+        // Step 5: Learn from interaction
+        learnFromInteraction(query, emotionallyAwareResponse, context)
+        
+        val processingTime = System.currentTimeMillis() - startTime
+        
+        return AIResponse(
+            response = emotionallyAwareResponse.text,
+            confidence = emotionallyAwareResponse.confidence,
+            reasoning = reasoningResult.reasoning,
+            sources = reasoningResult.sources,
+            processingTime = processingTime,
+            emotionalTone = emotionalContext.dominantEmotion,
+            suggestions = generateFollowUpSuggestions(query, emotionallyAwareResponse)
+        )
+    }
+    
+    private fun analyzeQueryComplexity(query: String): QueryAnalysis {
+        val wordCount = query.split(" ").size
+        val questionMarks = query.count { it == '?' }
+        val conjunctions = listOf("and", "but", "or", "if", "then", "because", "since", "while").count { query.contains(it, true) }
+        val complexityIndicators = listOf("compare", "analyze", "explain why", "what if", "how would").count { query.contains(it, true) }
+        
+        val complexity = when {
+            wordCount <= 5 && questionMarks <= 1 && conjunctions == 0 -> QueryComplexity.SIMPLE
+            wordCount <= 15 && conjunctions <= 2 && complexityIndicators <= 1 -> QueryComplexity.MODERATE
+            wordCount <= 30 && conjunctions <= 4 && complexityIndicators <= 3 -> QueryComplexity.COMPLEX
+            else -> QueryComplexity.MULTI_STEP
+        }
+        
+        return QueryAnalysis(complexity, wordCount, questionMarks, conjunctions, complexityIndicators)
+    }
+    
+    private fun processComplexQuery(query: String, intent: Intent, knowledge: List<KnowledgeNode>, context: List<ContextualInfo>): ReasoningResult {
+        return reasoningChain.processComplexReasoning(query, intent, knowledge, context)
+    }
+    
+    private fun learnFromInteraction(query: String, response: EmotionallyAwareResponse, context: ConversationContext) {
+        // Store interaction for learning
+        contextualMemory.storeInteraction(query, response.text, context)
+        
+        // Update knowledge graph with new connections
+        val entities = extractEntities(query)
+        knowledgeGraph.updateKnowledgeFromInteraction(entities, response, context)
+        
+        // Train neural network with interaction data
+        neuralNetwork.trainFromInteraction(query, response, context)
+    }
+    
+    private fun extractEntities(text: String): List<Entity> {
+        val entities = mutableListOf<Entity>()
+        
+        // Named Entity Recognition patterns
+        val personPattern = Regex("""(?i)\b([A-Z][a-z]+ [A-Z][a-z]+)\b""")
+        val locationPattern = Regex("""(?i)\b(in|at|near|from|to) ([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b""")
+        val datePattern = Regex("""(?i)\b(today|tomorrow|yesterday|\d{1,2}/\d{1,2}/\d{2,4}|\w+day)\b""")
+        val numberPattern = Regex("""\b\d+(?:\.\d+)?\b""")
+        
+        personPattern.findAll(text).forEach {
+            entities.add(Entity(it.value, EntityType.PERSON, it.range))
+        }
+        
+        locationPattern.findAll(text).forEach {
+            entities.add(Entity(it.groupValues[2], EntityType.LOCATION, it.range))
+        }
+        
+        datePattern.findAll(text).forEach {
+            entities.add(Entity(it.value, EntityType.DATE, it.range))
+        }
+        
+        numberPattern.findAll(text).forEach {
+            entities.add(Entity(it.value, EntityType.NUMBER, it.range))
+        }
+        
+        return entities
+    }
+}
+
+// ==================== NEURAL NETWORK PROCESSOR ====================
+
+class NeuralNetworkProcessor(private val context: Context) {
+    private val dbHelper = UltronDatabaseHelper(context)
+    private var networkWeights = mutableMapOf<String, FloatArray>()
+    private val learningRate = 0.01f
+    private val hiddenLayerSize = 128
+    private val outputLayerSize = 64
+    
+    init {
+        loadNetworkWeights()
+        initializeNetwork()
+    }
+    
+    private fun initializeNetwork() {
+        if (networkWeights.isEmpty()) {
+            // Initialize with random weights
+            networkWeights["input_hidden"] = FloatArray(hiddenLayerSize * 100) { Random.nextFloat() * 0.1f - 0.05f }
+            networkWeights["hidden_output"] = FloatArray(outputLayerSize * hiddenLayerSize) { Random.nextFloat() * 0.1f - 0.05f }
+            networkWeights["hidden_bias"] = FloatArray(hiddenLayerSize) { Random.nextFloat() * 0.1f - 0.05f }
+            networkWeights["output_bias"] = FloatArray(outputLayerSize) { Random.nextFloat() * 0.1f - 0.05f }
+            saveNetworkWeights()
+        }
+    }
+    
+    fun processInput(input: FloatArray): FloatArray {
+        // Forward propagation
+        val hiddenLayer = FloatArray(hiddenLayerSize)
+        val inputHiddenWeights = networkWeights["input_hidden"]!!
+        val hiddenBias = networkWeights["hidden_bias"]!!
+        
+        // Calculate hidden layer
+        for (h in 0 until hiddenLayerSize) {
+            var sum = hiddenBias[h]
+            for (i in input.indices) {
+                sum += input[i] * inputHiddenWeights[h * input.size + i]
+            }
+            hiddenLayer[h] = sigmoid(sum)
+        }
+        
+        // Calculate output layer
+        val outputLayer = FloatArray(outputLayerSize)
+        val hiddenOutputWeights = networkWeights["hidden_output"]!!
+        val outputBias = networkWeights["output_bias"]!!
+        
+        for (o in 0 until outputLayerSize) {
+            var sum = outputBias[o]
+            for (h in 0 until hiddenLayerSize) {
+                sum += hiddenLayer[h] * hiddenOutputWeights[o * hiddenLayerSize + h]
+            }
+            outputLayer[o] = sigmoid(sum)
+        }
+        
+        return outputLayer
+    }
+    
+    fun trainFromInteraction(query: String, response: EmotionallyAwareResponse, context: ConversationContext) {
+        val inputVector = textToVector(query)
+        val expectedOutput = responseToVector(response)
+        
+        // Perform backpropagation training
+        backpropagate(inputVector, expectedOutput)
+        
+        // Save updated weights periodically
+        if (Random.nextFloat() < 0.1f) { // 10% chance to save
+            saveNetworkWeights()
+        }
+    }
+    
+    private fun backpropagate(input: FloatArray, expectedOutput: FloatArray) {
+        // Forward pass
+        val hiddenLayer = FloatArray(hiddenLayerSize)
+        val actualOutput = processInput(input)
+        
+        // Calculate output layer gradients
+        val outputGradients = FloatArray(outputLayerSize)
+        for (o in 0 until outputLayerSize) {
+            val error = expectedOutput[o] - actualOutput[o]
+            outputGradients[o] = error * sigmoidDerivative(actualOutput[o]) * learningRate
+        }
+        
+        // Calculate hidden layer gradients
+        val hiddenGradients = FloatArray(hiddenLayerSize)
+        val hiddenOutputWeights = networkWeights["hidden_output"]!!
+        
+        for (h in 0 until hiddenLayerSize) {
+            var error = 0f
+            for (o in 0 until outputLayerSize) {
+                error += outputGradients[o] * hiddenOutputWeights[o * hiddenLayerSize + h]
+            }
+            hiddenGradients[h] = error * sigmoidDerivative(hiddenLayer[h]) * learningRate
+        }
+        
+        // Update weights
+        updateWeights(input, hiddenLayer, hiddenGradients, outputGradients)
+    }
+    
+    private fun updateWeights(input: FloatArray, hiddenLayer: FloatArray, hiddenGradients: FloatArray, outputGradients: FloatArray) {
+        val inputHiddenWeights = networkWeights["input_hidden"]!!
+        val hiddenOutputWeights = networkWeights["hidden_output"]!!
+        val hiddenBias = networkWeights["hidden_bias"]!!
+        val outputBias = networkWeights["output_bias"]!!
+        
+        // Update input to hidden weights
+        for (h in 0 until hiddenLayerSize) {
+            for (i in input.indices) {
+                inputHiddenWeights[h * input.size + i] += hiddenGradients[h] * input[i]
+            }
+            hiddenBias[h] += hiddenGradients[h]
+        }
+        
+        // Update hidden to output weights
+        for (o in 0 until outputLayerSize) {
+            for (h in 0 until hiddenLayerSize) {
+                hiddenOutputWeights[o * hiddenLayerSize + h] += outputGradients[o] * hiddenLayer[h]
+            }
+            outputBias[o] += outputGradients[o]
+        }
+    }
+    
+    private fun sigmoid(x: Float): Float = 1f / (1f + kotlin.math.exp(-x))
+    
+    private fun sigmoidDerivative(x: Float): Float = x * (1f - x)
+    
+    private fun textToVector(text: String): FloatArray {
+        // Convert text to numerical vector (simplified TF-IDF approach)
+        val words = text.lowercase().split(" ")
+        val vector = FloatArray(100) // Fixed size vector
+        
+        words.forEachIndexed { index, word ->
+            if (index < vector.size) {
+                vector[index] = word.hashCode().toFloat() / Int.MAX_VALUE
+            }
+        }
+        
+        return vector
+    }
+    
+    private fun responseToVector(response: EmotionallyAwareResponse): FloatArray {
+        val vector = FloatArray(outputLayerSize)
+        
+        // Encode response characteristics
+        vector[0] = response.confidence
+        vector[1] = response.text.length.toFloat() / 1000f // Normalized length
+        vector[2] = if (response.text.contains("?")) 1f else 0f // Question indicator
+        vector[3] = response.text.split(" ").size.toFloat() / 100f // Word count
+        
+        // Fill remaining with hash-based features
+        for (i in 4 until vector.size) {
+            vector[i] = (response.text.hashCode() + i).toFloat() / Int.MAX_VALUE
+        }
+        
+        return vector
+    }
+    
+    private fun loadNetworkWeights() {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query("neural_weights", null, null, null, null, null, null)
+        
+        cursor.use {
+            while (it.moveToNext()) {
+                val layerName = it.getString(it.getColumnIndexOrThrow("layer_name"))
+                val weightsBlob = it.getBlob(it.getColumnIndexOrThrow("weights"))
+                
+                val weights = FloatArray(weightsBlob.size / 4)
+                val buffer = ByteBuffer.wrap(weightsBlob)
+                buffer.order(ByteOrder.LITTLE_ENDIAN)
+                
+                for (i in weights.indices) {
+                    weights[i] = buffer.getFloat(i * 4)
+                }
+                
+                networkWeights[layerName] = weights
+            }
+        }
+    }
+    
+    private fun saveNetworkWeights() {
+        val db = dbHelper.writableDatabase
+        
+        networkWeights.forEach { (layerName, weights) ->
+            val buffer = ByteBuffer.allocate(weights.size * 4)
+            buffer.order(ByteOrder.LITTLE_ENDIAN)
+            
+            weights.forEach { weight ->
+                buffer.putFloat(weight)
+            }
+            
+            val values = ContentValues().apply {
+                put("layer_name", layerName)
+                put("weights", buffer.array())
+                put("updated_at", System.currentTimeMillis())
+            }
+            
+            db.insertWithOnConflict("neural_weights", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+}
+
+// ==================== KNOWLEDGE GRAPH MANAGER ====================
+
+class KnowledgeGraphManager(private val context: Context) {
+    private val dbHelper = UltronDatabaseHelper(context)
+    private val knowledgeNodes = mutableMapOf<String, KnowledgeNode>()
+    private val relationships = mutableListOf<KnowledgeRelationship>()
+    
+    init {
+        loadKnowledgeGraph()
+        initializeBaseKnowledge()
+    }
+    
+    fun findRelevantKnowledge(entities: List<Entity>, intent: Intent): List<KnowledgeNode> {
+        val relevantNodes = mutableListOf<KnowledgeNode>()
+        
+        entities.forEach { entity ->
+            // Direct matches
+            knowledgeNodes[entity.text.lowercase()]?.let { relevantNodes.add(it) }
+            
+            // Semantic matches
+            knowledgeNodes.values.forEach { node ->
+                if (calculateSemanticSimilarity(entity.text, node.concept) > 0.7f) {
+                    relevantNodes.add(node)
+                }
+            }
+        }
+        
+        // Add related nodes through relationships
+        val relatedNodes = mutableSetOf<KnowledgeNode>()
+        relevantNodes.forEach { node ->
+            relationships.filter { it.fromNode == node.id || it.toNode == node.id }
+                .forEach { relationship ->
+                    val relatedNodeId = if (relationship.fromNode == node.id) relationship.toNode else relationship.fromNode
+                    knowledgeNodes[relatedNodeId]?.let { relatedNodes.add(it) }
+                }
+        }
+        
+        relevantNodes.addAll(relatedNodes.take(10)) // Limit related nodes
+        return relevantNodes.distinctBy { it.id }.take(20) // Limit total nodes
+    }
+    
+    fun updateKnowledgeFromInteraction(entities: List<Entity>, response: EmotionallyAwareResponse, context: ConversationContext) {
+        entities.forEach { entity ->
+            val nodeId = entity.text.lowercase().replace(" ", "_")
+            
+            val existingNode = knowledgeNodes[nodeId]
+            if (existingNode != null) {
+                // Update existing node
+                existingNode.confidence = minOf(1.0f, existingNode.confidence + 0.1f)
+                existingNode.lastAccessed = System.currentTimeMillis()
+                existingNode.accessCount++
+            } else {
+                // Create new node
+                val newNode = KnowledgeNode(
+                    id = nodeId,
+                    concept = entity.text,
+                    type = entity.type.name,
+                    confidence = 0.6f,
+                    facts = mutableListOf(response.text.take(200)), // Store first 200 chars as fact
+                    createdAt = System.currentTimeMillis(),
+                    lastAccessed = System.currentTimeMillis(),
+                    accessCount = 1
+                )
+                knowledgeNodes[nodeId] = newNode
+            }
+        }
+        
+        // Create relationships between entities mentioned together
+        for (i in entities.indices) {
+            for (j in i + 1 until entities.size) {
+                val relationship = KnowledgeRelationship(
+                    id = "${entities[i].text.lowercase()}_${entities[j].text.lowercase()}",
+                    fromNode = entities[i].text.lowercase().replace(" ", "_"),
+                    toNode = entities[j].text.lowercase().replace(" ", "_"),
+                    relationshipType = "co_occurrence",
+                    strength = 0.5f,
+                    createdAt = System.currentTimeMillis()
+                )
+                
+                val existingRelationship = relationships.find { it.id == relationship.id }
+                if (existingRelationship != null) {
+                    existingRelationship.strength = minOf(1.0f, existingRelationship.strength + 0.1f)
+                } else {
+                    relationships.add(relationship)
+                }
+            }
+        }
+        
+        // Periodically save knowledge graph
+        if (Random.nextFloat() < 0.2f) { // 20% chance to save
+            saveKnowledgeGraph()
+        }
+    }
+    
+    private fun calculateSemanticSimilarity(text1: String, text2: String): Float {
+        val words1 = text1.lowercase().split(" ").toSet()
+        val words2 = text2.lowercase().split(" ").toSet()
+        
+        val intersection = words1.intersect(words2).size
+        val union = words1.union(words2).size
+        
+        return if (union == 0) 0f else intersection.toFloat() / union.toFloat()
+    }
+    
+    private fun initializeBaseKnowledge() {
+        val baseKnowledgeItems = listOf(
+            Triple("weather", "Current weather conditions and forecasts", "weather"),
+            Triple("time", "Current time and date information", "temporal"),
+            Triple("calendar", "Calendar events and scheduling", "temporal"),
+            Triple("calculation", "Mathematical calculations and computations", "computational"),
+            Triple("smart_home", "Home automation and IoT device control", "automation"),
+            Triple("file_management", "File and directory operations", "system"),
+            Triple("network", "Network scanning and device discovery", "network"),
+            Triple("system_info", "System and device information", "system")
+        )
+        
+        baseKnowledgeItems.forEach { (concept, description, type) ->
+            val nodeId = concept.replace(" ", "_")
+            if (!knowledgeNodes.containsKey(nodeId)) {
+                knowledgeNodes[nodeId] = KnowledgeNode(
+                    id = nodeId,
+                    concept = concept,
+                    type = type,
+                    confidence = 0.9f,
+                    facts = mutableListOf(description),
+                    createdAt = System.currentTimeMillis(),
+                    lastAccessed = System.currentTimeMillis(),
+                    accessCount = 0
+                )
+            }
+        }
+    }
+    
+    private fun loadKnowledgeGraph() {
+        // Load nodes
+        val db = dbHelper.readableDatabase
+        val nodesCursor = db.query("knowledge_nodes", null, null, null, null, null, null)
+        
+        nodesCursor.use {
+            while (it.moveToNext()) {
+                val node = KnowledgeNode(
+                    id = it.getString(it.getColumnIndexOrThrow("id")),
+                    concept = it.getString(it.getColumnIndexOrThrow("concept")),
+                    type = it.getString(it.getColumnIndexOrThrow("type")),
+                    confidence = it.getFloat(it.getColumnIndexOrThrow("confidence")),
+                    facts = it.getString(it.getColumnIndexOrThrow("facts")).split("|").toMutableList(),
+                    createdAt = it.getLong(it.getColumnIndexOrThrow("created_at")),
+                    lastAccessed = it.getLong(it.getColumnIndexOrThrow("last_accessed")),
+                    accessCount = it.getInt(it.getColumnIndexOrThrow("access_count"))
+                )
+                knowledgeNodes[node.id] = node
+            }
+        }
+        
+        // Load relationships
+        val relationshipsCursor = db.query("knowledge_relationships", null, null, null, null, null, null)
+        
+        relationshipsCursor.use {
+            while (it.moveToNext()) {
+                val relationship = KnowledgeRelationship(
+                    id = it.getString(it.getColumnIndexOrThrow("id")),
+                    fromNode = it.getString(it.getColumnIndexOrThrow("from_node")),
+                    toNode = it.getString(it.getColumnIndexOrThrow("to_node")),
+                    relationshipType = it.getString(it.getColumnIndexOrThrow("relationship_type")),
+                    strength = it.getFloat(it.getColumnIndexOrThrow("strength")),
+                    createdAt = it.getLong(it.getColumnIndexOrThrow("created_at"))
+                )
+                relationships.add(relationship)
+            }
+        }
+    }
+    
+    private fun saveKnowledgeGraph() {
+        val db = dbHelper.writableDatabase
+        
+        // Save nodes
+        knowledgeNodes.values.forEach { node ->
+            val values = ContentValues().apply {
+                put("id", node.id)
+                put("concept", node.concept)
+                put("type", node.type)
+                put("confidence", node.confidence)
+                put("facts", node.facts.joinToString("|"))
+                put("created_at", node.createdAt)
+                put("last_accessed", node.lastAccessed)
+                put("access_count", node.accessCount)
+            }
+            db.insertWithOnConflict("knowledge_nodes", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+        
+        // Save relationships
+        relationships.forEach { relationship ->
+            val values = ContentValues().apply {
+                put("id", relationship.id)
+                put("from_node", relationship.fromNode)
+                put("to_node", relationship.toNode)
+                put("relationship_type", relationship.relationshipType)
+                put("strength", relationship.strength)
+                put("created_at", relationship.createdAt)
+            }
+            db.insertWithOnConflict("knowledge_relationships", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+}
+
+// ==================== DATA CLASSES ====================
+
+data class QueryAnalysis(
+    val complexity: QueryComplexity,
+    val wordCount: Int,
+    val questionMarks: Int,
+    val conjunctions: Int,
+    val complexityIndicators: Int
+)
+
+enum class QueryComplexity {
+    SIMPLE, MODERATE, COMPLEX, MULTI_STEP
+}
+
+data class Entity(
+    val text: String,
+    val type: EntityType,
+    val range: IntRange
+)
+
+enum class EntityType {
+    PERSON, LOCATION, DATE, NUMBER, ORGANIZATION, MISC
+}
+
+data class KnowledgeNode(
+    val id: String,
+    val concept: String,
+    val type: String,
+    var confidence: Float,
+    val facts: MutableList<String>,
+    val createdAt: Long,
+    var lastAccessed: Long,
+    var accessCount: Int
+)
+
+data class KnowledgeRelationship(
+    val id: String,
+    val fromNode: String,
+    val toNode: String,
+    val relationshipType: String,
+    var strength: Float,
+    val createdAt: Long
+)
+
+data class AIResponse(
+    val response: String,
+    val confidence: Float,
+    val reasoning: String,
+    val sources: List<String>,
+    val processingTime: Long,
+    val emotionalTone: String,
+    val suggestions: List<String>
+)
+
+data class EmotionallyAwareResponse(
+    val text: String,
+    val confidence: Float,
+    val emotionalAdjustments: List<String>
+)
